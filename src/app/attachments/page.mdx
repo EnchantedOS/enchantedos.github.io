@@ -1,0 +1,111 @@
+
+# General Gameplay
+
+Enhance your Minecraft server by tapping into the General Gameplay features provided by the Enchanted API. Plugins can extend the `Api` class to use these functionalities that offer more interaction with the game mechanics. In this section, we cover the `advancement` and `attribute` methods to manipulate player advancements and attributes.
+
+## The `advancement` Model
+
+The `advancement` method allows plugins to grant or revoke an advancement or its criterion from players to track or reward player progress.
+
+### Method
+
+```typescript
+advancement(action: string, target: string, advancement?: string, criterion?: string): Promise<string | undefined>
+```
+
+#### Parameters
+
+<Properties>
+  <Property name="action" type="string">
+    `'grant'` or `'revoke'` to specify what to do with the advancement.
+  </Property>
+  <Property name="target" type="string">
+    The player selector or name to target.
+  </Property>
+  <Property name="advancement" type="string" optional>
+    The namespaced ID of the advancement to target (optional).
+  </Property>
+  <Property name="criterion" type="string" optional>
+    The specific criterion within the advancement to target (optional).
+  </Property>
+</Properties>
+
+## The `attribute` Model
+
+Attributes define various properties of entities, such as health or armor. These methods are used for getting, setting, and modifying attributes programmatically.
+
+### Methods
+
+#### Get Total Attribute Value
+
+```typescript
+getAttribute(target: string, attribute: string, scale?: number): Promise<string | undefined>
+```
+
+#### Get Base Attribute Value
+
+```typescript
+getAttributeBase(target: string, attribute: string, scale?: number): Promise<string | undefined>
+```
+
+#### Set Base Attribute Value
+
+```typescript
+setAttributeBase(target: string, attribute: string, value: number): Promise<Promise<string> | undefined>
+```
+
+#### Add Attribute Modifier
+
+```typescript
+addAttributeModifier(
+    target: string,
+    attribute: string,
+    uuid: string,
+    name: string,
+    value: number,
+    operation: string
+): Promise<Promise<string> | undefined>
+```
+
+#### Remove Attribute Modifier
+
+```typescript
+removeAttributeModifier(target: string, attribute: string, uuid: string): Promise<Promise<string> | undefined>
+```
+
+#### Get Attribute Modifier Value
+
+```typescript
+getAttributeModifierValue(
+    target: string,
+    attribute: string,
+    uuid: string,
+    scale?: number
+): Promise<Promise<string> | undefined>
+```
+
+#### Parameters for Attribute Methods
+
+<Properties>
+  <Property name="target" type="string">
+    Specifies the target entity.
+  </Property>
+  <Property name="attribute" type="string">
+    Specifies the attribute to interact with.
+  </Property>
+  <Property name="value" type="number" optional>
+    The value to set for an attribute (optional for some methods).
+  </Property>
+  <Property name="uuid" type="string" optional>
+    A unique identifier for the attribute modifier (required for some methods).
+  </Property>
+  <Property name="name" type="string" optional>
+    The name of the modifier (optional for some methods).
+  </Property>
+  <Property name="operation" type="string" optional>
+    The operation of the modifier (optional for some methods).
+  </Property>
+  <Property name="scale" type="number" optional>
+    The scale to get the attribute (optional for some methods).
+  </Property>
+</Properties>

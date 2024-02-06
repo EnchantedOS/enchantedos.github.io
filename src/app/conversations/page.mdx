@@ -1,0 +1,57 @@
+
+# List and Information
+
+Dive into the insights and details of your Minecraft world with the "List and Information" category of the "Enchanted" API. Easily list players and retrieve valuable data, providing an overview of in-game entities and player status.
+
+## Player and Entity Information Methods
+
+### List Players
+
+Retrieve a list of all players on the server.
+
+```typescript
+listPlayers(uuids: boolean = false): Promise<string>
+```
+
+### Entity Information (e.g., Entities, Blocks)
+
+Query detailed information about entities and blocks in the game.
+
+```typescript
+// Example method names
+getData(target: 'entity' | 'block' | 'storage', targetPosOrUuid: string, path?: string, scale?: number): Promise<string | undefined>
+```
+
+#### Example Usage
+
+##### List Players
+
+Get a list of all players currently online:
+
+```typescript
+// List players without UUIDs
+const playersList = await api.listPlayers();
+console.log('Players online:', playersList);
+
+// List players with UUIDs
+const playersListWithUuids = await api.listPlayers(true);
+console.log('Players and UUIDs:', playersListWithUuids);
+```
+
+##### Entity Information
+
+Fetch and display information about a specific entity:
+
+```typescript
+// Get data about a specific block
+const blockData = await api.getData('block', '123 64 123');
+console.log('Block Data:', blockData);
+
+// Get data about an entity with UUID
+const entityData = await api.getData('entity', 'acb123d4-6678-4e21-9abc-d4e56789dbca');
+console.log('Entity Data:', entityData);
+```
+
+### Utility
+
+The "List and Information" category also features utility methods that can be extremely powerful when creating plugins that need to perform read operations on the numerous entities that exist within the Minecraft server.
