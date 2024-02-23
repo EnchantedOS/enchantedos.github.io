@@ -235,21 +235,26 @@ export const navigation: Array<NavGroup> = [
     links: [
       { title: 'Introduction', href: '/' },
       { title: 'Quickstart', href: '/quickstart' },
-      { title: 'SDKs', href: '/sdks' },
       { title: 'Authentication', href: '/authentication' },
-      { title: 'Pagination', href: '/pagination' },
-      { title: 'Errors', href: '/errors' },
-      { title: 'Webhooks', href: '/webhooks' },
+      { title: 'Enchantments', href: '/enchantments' },
     ],
   },
   {
-    title: 'Resources',
+    title: 'Enchantments',
     links: [
-      { title: 'Contacts', href: '/contacts' },
+      { title: 'Game Rules and Modes', href: '/contacts' },
+    ],
+  },
+  {
+    title: 'Server API',
+    links: [
       { title: 'Conversations', href: '/conversations' },
-      { title: 'Messages', href: '/messages' },
-      { title: 'Groups', href: '/groups' },
-      { title: 'Attachments', href: '/attachments' },
+    ],
+  },
+  {
+    title: 'Operating System',
+    links: [
+      { title: 'Conversations', href: '/conversations' },
     ],
   },
 ]
@@ -259,7 +264,7 @@ export function Navigation(props: React.ComponentPropsWithoutRef<'nav'>) {
     <nav {...props}>
       <ul role="list">
         <TopLevelNavItem href="/">Documentation</TopLevelNavItem>
-        <TopLevelNavItem href="#">Playground</TopLevelNavItem>
+        <TopLevelNavItem href="#">Boot OS</TopLevelNavItem>
         {navigation.map((group, groupIndex) => (
           <NavigationGroup
             key={group.title}

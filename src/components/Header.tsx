@@ -73,7 +73,8 @@ export const Header = forwardRef<
       <div className="flex items-center gap-5 lg:hidden">
         <MobileNavigation />
         <Link href="/" aria-label="Home">
-          <Logo className="h-6" />
+          {/*<Logo className="h-6" />*/}
+          Enchan<span className="pr-[6px] text-fuchsia-500">⛏</span>ed
         </Link>
       </div>
       <div className="flex items-center gap-5">
@@ -88,7 +89,7 @@ export const Header = forwardRef<
           <ThemeToggle />
         </div>
         <div className="hidden min-[416px]:contents">
-          <Button href="#">Playground</Button>
+          <Button href="#">Boot OS</Button>
         </div>
       </div>
     </motion.div>
