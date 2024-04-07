@@ -234,27 +234,27 @@ export const navigation: Array<NavGroup> = [
     title: 'Guides',
     links: [
       { title: 'Introduction', href: '/' },
-      { title: 'Quickstart', href: '/quickstart' },
-      { title: 'Authentication', href: '/authentication' },
+      // { title: 'Quickstart', href: '/quickstart' },
+      // { title: 'Authentication', href: '/authentication' },
       { title: 'Enchantments', href: '/enchantments' },
     ],
   },
   {
     title: 'Enchantments',
     links: [
-      { title: 'Game Rules and Modes', href: '/contacts' },
+      // { title: 'Game Rules and Modes', href: '/contacts' },
     ],
   },
   {
     title: 'Server API',
     links: [
-      { title: 'Conversations', href: '/conversations' },
+      // { title: 'Conversations', href: '/conversations' },
     ],
   },
   {
     title: 'Operating System',
     links: [
-      { title: 'Conversations', href: '/conversations' },
+      // { title: 'Conversations', href: '/conversations' },
     ],
   },
 ]
