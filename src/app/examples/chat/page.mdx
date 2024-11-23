@@ -1,0 +1,387 @@
+
+export const metadata = {
+    title: 'Chat Enhancement Module',
+    description:
+        'Add chat features with WebSocket integration for web clients.',
+}
+
+# Chat Enhancement Module
+
+Add web client integration to Minecraft chat through WebSocket communication. {{ className: 'lead' }}
+
+<Note>
+    This module allows web clients to receive and send chat messages through WebSocket connections while maintaining Minecraft's base chat functionality.
+</Note>
+
+## Complete Module
+
+```typescript {{ title: 'ChatEnhanceModule.ts' }}
+interface PlayerChatData {
+  lastMessage: string;
+  lastMessageTime: number;
+  notifications: boolean;
+}
+
+interface ChatMessage {
+  type: 'chat' | 'announcement' | 'system';
+  playerName: string;
+  message: string;
+  timestamp: number;
+}
+
+@Module({
+  name: 'ChatEnhance',
+  version: '1.0.0'
+})
+export class ChatEnhanceModule {
+  // Get player settings
+  private async getPlayerData(
+    kv: Deno.Kv,
+    playerName: string
+  ): Promise<PlayerChatData> {
+    const data = await kv.get(['chat', 'players', playerName]);
+    return data.value || {
+      lastMessage: '',
+      lastMessageTime: 0,
+      notifications: true
+    };
+  }
+
+  // Store chat message
+  private async storeChatMessage(
+    kv: Deno.Kv,
+    message: ChatMessage
+  ): Promise<void> {
+    const messages = await kv.get(['chat', 'recent']);
+    const recent = messages.value || [];
+
+    // Keep last 100 messages
+    const updated = [message, ...recent].slice(0, 100);
+    await kv.set(['chat', 'recent'], updated);
+  }
+
+  // Listen to chat events and broadcast to web clients
+  @Event('player_chat')
+  async handleChat({ params, kv, broadcastPlayers, log }: ScriptContext) {
+    const { playerName, message } = params;
+
+    try {
+      // Create chat message object
+      const chatMessage: ChatMessage = {
+        type: 'chat',
+        playerName,
+        message,
+        timestamp: Date.now()
+      };
+
+      // Store message
+      await this.storeChatMessage(kv, chatMessage);
+
+      // Broadcast to web clients
+      broadcastPlayers({
+        type: 'chat_message',
+        data: chatMessage
+      });
+
+      // Log chat message
+      log(`[CHAT] ${playerName}: ${message}`);
+
+    } catch (error) {
+      log(`Chat processing error: ${error.message}`);
+    }
+  }
+
+  // Handle messages from web clients
+  @Socket('send_message')
+  async handleWebMessage({ params, kv, api, auth }: ScriptContext) {
+    try {
+      // Verify authentication
+      if (!await auth.checkPermission('player')) {
+        return {
+          success: false,
+          error: 'Unauthorized'
+        };
+      }
+
+      const { message } = params;
+      const playerName = params.playerName;
+
+      // Send message in game
+      await api.tellraw('@a', JSON.stringify({
+        text: `${playerName}: `,
+        color: "aqua",
+        extra: [{
+          text: message,
+          color: "white"
+        }]
+      }));
+
+      return {
+        success: true,
+        data: {
+          timestamp: Date.now()
+        }
+      };
+
+    } catch (error) {
+      return {
+        success: false,
+        error: error.message
+      };
+    }
+  }
+
+  // Get recent messages
+  @Socket('get_recent_messages')
+  async getRecentMessages({ params, kv, auth }: ScriptContext) {
+    try {
+      // Verify authentication
+      if (!await auth.checkPermission('player')) {
+        return {
+          success: false,
+          error: 'Unauthorized'
+        };
+      }
+
+      const messages = await kv.get(['chat', 'recent']);
+
+      return {
+        success: true,
+        data: messages.value || []
+      };
+
+    } catch (error) {
+      return {
+        success: false,
+        error: error.message
+      };
+    }
+  }
+
+  // Broadcast announcement
+  @Command(['announce'])
+  @Description('Send a server announcement')
+  @Permission('operator')
+  @Argument([
+    { name: 'message', type: 'string', description: 'Announcement message' }
+  ])
+  async sendAnnouncement({ params, kv, api, broadcastPlayers }: ScriptContext) {
+    const { args } = params;
+
+    try {
+      // Send in game
+      await api.tellraw('@a', JSON.stringify([
+        {
+          text: "[ Announcement ] ",
+          color: "gold",
+          bold: true
+        },
+        {
+          text: args.message,
+          color: "yellow"
+        }
+      ]));
+
+      // Create announcement message
+      const announcement: ChatMessage = {
+        type: 'announcement',
+        playerName: 'SERVER',
+        message: args.message,
+        timestamp: Date.now()
+      };
+
+      // Store and broadcast
+      await this.storeChatMessage(kv, announcement);
+      broadcastPlayers({
+        type: 'chat_message',
+        data: announcement
+      });
+
+    } catch (error) {
+      throw new Error(`Failed to send announcement: ${error.message}`);
+    }
+  }
+}
+```
+
+## WebSocket Integration
+
+### Message Format
+
+Messages exchanged between the server and web clients:
+
+<CodeGroup>
+
+    ```typescript {{ title: 'Server to Client' }}
+    // Chat message
+    {
+        type: 'chat_message',
+        data: {
+        type: 'chat',
+        playerName: string,
+        message: string,
+        timestamp: number
+    }
+    }
+
+    // Announcement
+    {
+        type: 'chat_message',
+        data: {
+        type: 'announcement',
+        playerName: 'SERVER',
+        message: string,
+        timestamp: number
+    }
+    }
+    ```
+
+    ```typescript {{ title: 'Client to Server' }}
+    // Send message
+    {
+        eventType: 'send_message',
+        data: {
+        playerName: string,
+        message: string
+    }
+    }
+
+    // Get recent messages
+    {
+        eventType: 'get_recent_messages'
+    }
+    ```
+
+</CodeGroup>
+
+### Web Client Implementation
+
+Example web client implementation:
+
+```typescript {{ title: 'Web Client Example' }}
+class ChatClient {
+  private socket: WebSocket;
+  private token: string;
+
+  constructor(url: string, token: string) {
+    this.socket = new WebSocket(url);
+    this.token = token;
+
+    // Handle incoming messages
+    this.socket.onmessage = (event) => {
+      const data = JSON.parse(event.data);
+      if (data.type === 'chat_message') {
+        this.handleChatMessage(data.data);
+      }
+    };
+  }
+
+  // Send chat message
+  async sendMessage(message: string) {
+    this.socket.send(JSON.stringify({
+      eventType: 'send_message',
+      data: {
+        message,
+        token: this.token
+      }
+    }));
+  }
+
+  // Get recent messages
+  async getRecentMessages() {
+    this.socket.send(JSON.stringify({
+      eventType: 'get_recent_messages',
+      data: {
+        token: this.token
+      }
+    }));
+  }
+
+  // Handle incoming chat message
+  private handleChatMessage(message: ChatMessage) {
+    switch (message.type) {
+      case 'chat':
+        console.log(`${message.playerName}: ${message.message}`);
+        break;
+      case 'announcement':
+        console.log(`[Announcement] ${message.message}`);
+        break;
+    }
+  }
+}
+
+// Usage
+const chat = new ChatClient('ws://server/ws', 'player-token');
+
+// Send message
+chat.sendMessage('Hello from web!');
+
+// Get recent messages
+chat.getRecentMessages();
+```
+
+## Usage Examples
+
+How to use the chat system with web integration:
+
+<CodeGroup>
+
+    ```typescript {{ title: 'In-Game Chat' }}
+    // Regular chat works normally
+    Hello everyone!
+
+    // Send announcement
+    /announce Server event starting soon!
+    ```
+
+    ```typescript {{ title: 'Web Client' }}
+    // Connect to chat
+    const chat = new ChatClient(url, token);
+
+    // Send message
+    await chat.sendMessage('Hello from web!');
+
+    // Get message history
+    await chat.getRecentMessages();
+    ```
+
+    ```typescript {{ title: 'Message Handling' }}
+    // Handle incoming messages
+    socket.onmessage = (event) => {
+    const { type, data } = JSON.parse(event.data);
+
+    if (type === 'chat_message') {
+    displayMessage(data);
+}
+};
+    ```
+
+</CodeGroup>
+
+## Key Features
+
+1. **Real-time Communication**
+- Bidirectional chat between game and web
+- Message broadcasting
+- Chat history
+
+2. **Message Types**
+- Regular chat messages
+- Announcements
+- System messages
+
+3. **Authentication**
+- Token-based auth
+- Permission checks
+- Secure messaging
+
+4. **Message Storage**
+- Recent message history
+- Message persistence
+- Chat logs
+
+<div className="not-prose">
+    <Button href="/examples/player-stats" variant="text" arrow="right">
+        <>View Player Stats Example</>
+    </Button>
+</div>

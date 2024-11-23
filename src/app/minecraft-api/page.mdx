@@ -1,0 +1,348 @@
+export const metadata = {
+    title: 'Minecraft API',
+    description:
+        "Learn how to interact with your Minecraft server using Enchanted's API interface.",
+}
+
+# Minecraft API
+
+The Minecraft API provides methods to interact with your Minecraft server directly from your modules. {{ className: 'lead' }}
+
+## Basic Commands
+
+Execute basic Minecraft commands:
+
+<CodeGroup>
+
+    ```typescript {{ title: 'Command Execution' }}
+    @Command(['example'])
+    async exampleCommand({ api }: ScriptContext) {
+    // Execute any Minecraft command
+    await api.executeCommand('time set day');
+
+    // Send message to player
+    await api.tellraw('player123', JSON.stringify({
+    text: "Hello!",
+    color: "gold"
+}));
+}
+    ```
+
+    ```typescript {{ title: 'Player Commands' }}
+    // Give items to player
+    await api.give(playerName, 'minecraft:diamond', 64);
+
+    // Teleport player
+    await api.teleport(playerName, '100', '64', '100');
+
+    // Set gamemode
+    await api.gamemode('creative', playerName);
+    ```
+
+    ```typescript {{ title: 'World Commands' }}
+    // Set time
+    await api.time('set', 'day');
+
+    // Change weather
+    await api.weather('clear', 1000);
+
+    // Set world spawn
+    await api.setWorldSpawn(0, 64, 0);
+    ```
+
+</CodeGroup>
+
+## Player Management
+
+Methods for managing players:
+
+```typescript {{ title: 'Player API Methods' }}
+// Player effects
+await api.effect('give', playerName, 'minecraft:speed', 200, 1);
+await api.effect('clear', playerName);
+
+// Experience management
+await api.xp('add', playerName, 100, 'points');
+await api.xp('set', playerName, 30, 'levels');
+
+// Inventory management
+await api.clear(playerName, 'minecraft:diamond');
+await api.give(playerName, 'minecraft:diamond_sword', 1);
+
+// Player state
+await api.kill(playerName);
+await api.gamemode('survival', playerName);
+```
+
+## World Manipulation
+
+Methods for manipulating the world:
+
+<CodeGroup>
+
+    ```typescript {{ title: 'Block Operations' }}
+    // Set individual blocks
+    await api.setBlock(x, y, z, 'minecraft:stone');
+
+    // Fill areas
+    await api.fill(
+    x1, y1, z1,    // Start position
+    x2, y2, z2,    // End position
+    'minecraft:stone',
+    'replace'
+    );
+
+    // Clone regions
+    await api.clone(
+    x1, y1, z1,    // Source start
+    x2, y2, z2,    // Source end
+    x, y, z        // Destination
+    );
+    ```
+
+    ```typescript {{ title: 'Entity Management' }}
+    // Spawn entities
+    await api.summon(
+    'minecraft:zombie',
+    x, y, z,
+    '{"CustomName":"{\\"text\\":\\"Custom Zombie\\"}"}'
+    );
+
+    // Get entity data
+    const entityData = await api.getEntityData('player123');
+    ```
+
+    ```typescript {{ title: 'World State' }}
+    // Get world border
+    const border = await api.getWorldBorder();
+
+    // Set world border
+    await api.setWorldBorder(1000, 30);  // 1000 blocks, 30s transition
+
+    // Get time
+    const time = await api.getTime();
+    ```
+
+</CodeGroup>
+
+## Scoreboard Management
+
+Methods for managing scoreboards:
+
+```typescript {{ title: 'Scoreboard Methods' }}
+// Create objective
+await api.scoreboardObjectiveAdd(
+  'kills',           // Objective name
+  'playerKillCount', // Criteria
+  'Player Kills'     // Display name
+);
+
+// Set scores
+await api.setScoreboardPlayer('player123', 'kills', 10);
+
+// Get scores
+const scores = await api.getScoreboardPlayers('kills');
+
+// Remove objective
+await api.scoreboardObjectiveRemove('kills');
+
+// Display settings
+await api.scoreboardObjectiveSetDisplay('sidebar', 'kills');
+```
+
+## Chat & Messages
+
+Methods for communication:
+
+```typescript {{ title: 'Message Methods' }}
+// Simple message
+await api.tellraw(playerName, JSON.stringify({
+  text: "Hello!",
+  color: "gold"
+}));
+
+// Advanced formatting
+await api.tellraw(playerName, JSON.stringify([
+  {
+    text: "Click ",
+    color: "white"
+  },
+  {
+    text: "here",
+    color: "gold",
+    bold: true,
+    clickEvent: {
+      action: "run_command",
+      value: "/help"
+    },
+    hoverEvent: {
+      action: "show_text",
+      value: "Click for help"
+    }
+  },
+  {
+    text: " for help!",
+    color: "white"
+  }
+]));
+
+// Title messages
+await api.title(
+  playerName,
+  'title',
+  JSON.stringify({
+    text: "Big Message",
+    color: "red"
+  })
+);
+```
+
+## Player Data
+
+Methods for accessing player data:
+
+```typescript {{ title: 'Player Data Methods' }}
+// Get general player data
+const playerData = await api.getPlayerData(playerName);
+
+// Get position
+const position = await api.getPlayerPosition(playerName);
+
+// Get inventory
+const inventory = await api.getPlayerInventory(playerName);
+
+// Get experience
+const xp = await api.getPlayerXP(playerName);
+
+// Get attributes
+const attributes = await api.getPlayerAttributes(playerName);
+```
+
+## Complete Example
+
+Here's a comprehensive example using various API methods:
+
+```typescript {{ title: 'GamemodeModule.ts' }}
+@Module({
+  name: 'GamemodeModule',
+  version: '1.0.0'
+})
+export class GamemodeModule {
+  @Command(['game', 'start'])
+  @Permission('operator')
+  async startGame({ params, api }: ScriptContext) {
+    const { sender } = params;
+
+    try {
+      // Reset world
+      await api.time('set', 'day');
+      await api.weather('clear');
+
+      // Set up world border
+      await api.worldBorderCenter(0, 0);
+      await api.setWorldBorder(1000);  // 1000 block diameter
+
+      // Create scoreboard
+      await api.scoreboardObjectiveAdd('points', 'dummy', 'Points');
+      await api.scoreboardObjectiveSetDisplay('sidebar', 'points');
+
+      // Set up players
+      const players = await api.listPlayers();
+
+      for (const player of players.split('\n')) {
+        // Clear inventory
+        await api.clear(player);
+
+        // Give starting items
+        await api.give(player, 'minecraft:iron_sword');
+        await api.give(player, 'minecraft:bread', 16);
+
+        // Set gamemode
+        await api.gamemode('survival', player);
+
+        // Reset score
+        await api.setScoreboardPlayer(player, 'points', 0);
+
+        // Apply effects
+        await api.effect('give', player, 'minecraft:resistance', 100, 1);
+
+        // Send title
+        await api.title(player, 'title', JSON.stringify({
+          text: "Game Starting!",
+          color: "gold",
+          bold: true
+        }));
+
+        // Spread players
+        await api.spreadPlayers(
+          [0, 0],      // Center
+          100,         // Min distance
+          400,         // Max range
+          false,       // Respect teams
+          player
+        );
+      }
+
+      // Start countdown
+      for (let i = 5; i > 0; i--) {
+        await api.title('@a', 'actionbar', JSON.stringify({
+          text: `Game starts in ${i}...`,
+          color: "yellow"
+        }));
+
+        // Wait 1 second
+        await new Promise(resolve => setTimeout(resolve, 1000));
+      }
+
+      // Game start
+      await api.title('@a', 'title', JSON.stringify({
+        text: "GO!",
+        color: "green",
+        bold: true
+      }));
+
+      // Play sound
+      await api.playSound(
+        'entity.ender_dragon.growl',
+        'master',
+        '@a'
+      );
+
+    } catch (error) {
+      await api.tellraw(sender, JSON.stringify({
+        text: `Error: ${error.message}`,
+        color: "red"
+      }));
+    }
+  }
+
+  @Event('player_death')
+  async onPlayerDeath({ params, api }: ScriptContext) {
+    const { playerName, attackerId, attackerType } = params;
+
+    if (attackerType === 'player') {
+      // Award points to killer
+      const currentScore = await api.getScoreboardPlayers('points');
+      const killerScore = currentScore[attackerId] || 0;
+
+      await api.setScoreboardPlayer(
+        attackerId,
+        'points',
+        killerScore + 1
+      );
+
+      // Announce kill
+      await api.tellraw('@a', JSON.stringify({
+        text: `${attackerId} eliminated ${playerName}!`,
+        color: "yellow"
+      }));
+    }
+  }
+}
+```
+
+<div className="not-prose">
+    <Button href="/modules" variant="text" arrow="right">
+        <>Learn about Modules</>
+    </Button>
+</div>

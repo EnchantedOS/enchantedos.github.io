@@ -1,0 +1,350 @@
+
+export const metadata = {
+    title: 'Utilities',
+    description:
+        'Learn about the utility functions and helper methods available in Enchanted.',
+}
+
+# Utilities
+
+Enchanted provides various utility functions to simplify common tasks in your modules. {{ className: 'lead' }}
+
+## Rate Limiting
+
+Utilities for managing request rates:
+
+```typescript {{ title: 'RateLimiter' }}
+class RateLimiter {
+  // Set rate limit for method
+  setMethodCost(method: string, cost: number);
+
+  // Check rate limit
+  async handleSocketRateLimit(
+    ip: string,
+    method: string,
+    userRole: 'guest' | 'player' | 'operator'
+  ): Promise<{
+    allowed: boolean;
+    error?: string;
+  }>;
+}
+
+// Usage example
+const rateLimiter = new RateLimiter(kv);
+rateLimiter.setMethodCost('custom_command_executed', 5);
+rateLimiter.setMethodCost('auth', 3);
+
+// Check rate limit
+const result = await rateLimiter.handleSocketRateLimit(
+  clientIp,
+  'auth',
+  'player'
+);
+```
+
+## Message Formatting
+
+Helper functions for formatting messages:
+
+<CodeGroup>
+
+    ```typescript {{ title: 'Chat Messages' }}
+    function formatChatMessage(
+    message: string,
+    options: {
+    color?: string;
+    bold?: boolean;
+    italic?: boolean;
+    underlined?: boolean;
+    clickEvent?: {
+    action: string;
+    value: string;
+};
+    hoverEvent?: {
+    action: string;
+    value: string;
+};
+}
+    ): string {
+    return JSON.stringify({
+    text: message,
+    ...options
+});
+}
+
+    // Usage
+    await api.tellraw(
+    playerName,
+    formatChatMessage("Click me!", {
+    color: "gold",
+    bold: true,
+    clickEvent: {
+    action: "run_command",
+    value: "/help"
+}
+})
+    );
+    ```
+
+    ```typescript {{ title: 'Complex Messages' }}
+    function formatMultiMessage(
+    parts: Array<{
+    text: string;
+    color?: string;
+    bold?: boolean;
+    italic?: boolean;
+    }>
+    ): string {
+    return JSON.stringify(parts);
+}
+
+    // Usage
+    await api.tellraw(
+    playerName,
+    formatMultiMessage([
+    { text: "Welcome ", color: "gold" },
+    { text: playerName, color: "aqua", bold: true },
+    { text: "!", color: "gold" }
+    ])
+    );
+    ```
+
+</CodeGroup>
+
+## Time Utilities
+
+Functions for handling time and durations:
+
+```typescript {{ title: 'Time Utilities' }}
+// Format duration
+function formatDuration(ms: number): string {
+  const seconds = Math.floor((ms / 1000) % 60);
+  const minutes = Math.floor((ms / (1000 * 60)) % 60);
+  const hours = Math.floor((ms / (1000 * 60 * 60)) % 24);
+  const days = Math.floor(ms / (1000 * 60 * 60 * 24));
+
+  const parts = [];
+  if (days > 0) parts.push(`${days}d`);
+  if (hours > 0) parts.push(`${hours}h`);
+  if (minutes > 0) parts.push(`${minutes}m`);
+  if (seconds > 0) parts.push(`${seconds}s`);
+
+  return parts.join(' ');
+}
+
+// Format timestamp
+function formatTimestamp(date: Date | string): string {
+  const d = new Date(date);
+  return d.toLocaleString();
+}
+
+// Usage example
+@Command(['playtime'])
+async checkPlaytime({ params, kv, api }: ScriptContext) {
+  const stats = await kv.get(['player', params.sender, 'stats']);
+  const playtime = stats.value?.playtime || 0;
+
+  await api.tellraw(params.sender, JSON.stringify({
+    text: `Your playtime: ${formatDuration(playtime)}`,
+    color: "gold"
+  }));
+}
+```
+
+## Data Validation
+
+Helper functions for validating data:
+
+```typescript {{ title: 'Validation Utilities' }}
+// Validate username
+function isValidUsername(username: string): boolean {
+  return /^[a-zA-Z0-9_]{2,16}$/.test(username);
+}
+
+// Validate amount
+function isValidAmount(amount: number): boolean {
+  return Number.isInteger(amount) && amount > 0;
+}
+
+// Validate coordinates
+function isValidLocation(x: number, y: number, z: number): boolean {
+  return !isNaN(x) && !isNaN(y) && !isNaN(z);
+}
+
+// Usage example
+@Command(['give'])
+@Permission('operator')
+async giveItems({ params, api }: ScriptContext) {
+  const { sender, args } = params;
+
+  if (!isValidUsername(args.player)) {
+    throw new Error('Invalid player name');
+  }
+
+  if (!isValidAmount(args.amount)) {
+    throw new Error('Invalid amount');
+  }
+}
+```
+
+## Promise Utilities
+
+Helpers for working with async operations:
+
+```typescript {{ title: 'Promise Utilities' }}
+// Delay execution
+function delay(ms: number): Promise<void> {
+  return new Promise(resolve => setTimeout(resolve, ms));
+}
+
+// Retry operation
+async function retry<T>(
+  operation: () => Promise<T>,
+  attempts: number = 3,
+  delayMs: number = 1000
+): Promise<T> {
+  let lastError: Error;
+
+  for (let i = 0; i < attempts; i++) {
+    try {
+      return await operation();
+    } catch (error) {
+      lastError = error;
+      if (i < attempts - 1) {
+        await delay(delayMs);
+      }
+    }
+  }
+
+  throw lastError;
+}
+
+// Usage example
+@Event('player_joined')
+async handleJoin({ params, api }: ScriptContext) {
+  // Retry welcome message if it fails
+  await retry(async () => {
+    await api.tellraw(params.playerName, "Welcome!");
+  });
+}
+```
+
+## Collection Utilities
+
+Helpers for working with collections:
+
+```typescript {{ title: 'Collection Utilities' }}
+// Chunk array
+function chunk<T>(array: T[], size: number): T[][] {
+  return Array.from({ length: Math.ceil(array.length / size) }, (_, i) =>
+    array.slice(i * size, i * size + size)
+  );
+}
+
+// Random element
+function randomElement<T>(array: T[]): T {
+  return array[Math.floor(Math.random() * array.length)];
+}
+
+// Group by
+function groupBy<T>(
+  array: T[],
+  key: keyof T
+): Record<string, T[]> {
+  return array.reduce((groups, item) => {
+    const value = String(item[key]);
+    return {
+      ...groups,
+      [value]: [...(groups[value] || []), item]
+    };
+  }, {} as Record<string, T[]>);
+}
+
+// Usage example
+@Command(['list'])
+async listPlayers({ players, api }: ScriptContext) {
+  // Group players by role
+  const grouped = groupBy(players, 'role');
+
+  // Display in chunks
+  const chunks = chunk(players, 10);
+}
+```
+
+## Complete Example
+
+Here's a module using various utilities:
+
+```typescript {{ title: 'UtilityModule.ts' }}
+@Module({
+  name: 'UtilityModule',
+  version: '1.0.0'
+})
+export class UtilityModule {
+  private rateLimiter: RateLimiter;
+
+  constructor() {
+    this.rateLimiter = new RateLimiter(kv);
+    this.rateLimiter.setMethodCost('stats', 2);
+  }
+
+  @Command(['stats'])
+  @Permission('player')
+  async showStats({ params, kv, api }: ScriptContext) {
+    const { sender } = params;
+
+    try {
+      // Check rate limit
+      const rateLimit = await this.rateLimiter
+        .handleSocketRateLimit(params.ip, 'stats', 'player');
+
+      if (!rateLimit.allowed) {
+        throw new Error('Rate limit exceeded');
+      }
+
+      // Get player stats
+      const stats = await retry(async () => {
+        const result = await kv.get(['player', sender, 'stats']);
+        return result.value;
+      });
+
+      // Format message
+      await api.tellraw(sender, formatMultiMessage([
+        { text: "=== Stats ===\n", color: "gold", bold: true },
+        { text: `Playtime: ${formatDuration(stats.playtime)}\n`, color: "yellow" },
+        { text: `Last seen: ${formatTimestamp(stats.lastSeen)}`, color: "gray" }
+      ]));
+
+    } catch (error) {
+      await api.tellraw(sender, formatChatMessage(
+        `Error: ${error.message}`,
+        { color: "red" }
+      ));
+    }
+  }
+
+  @Event('player_joined')
+  async handleJoin({ params, api }: ScriptContext) {
+    const { playerName } = params;
+
+    // Validate username
+    if (!isValidUsername(playerName)) {
+      return;
+    }
+
+    // Send welcome message with delay
+    await delay(100);
+    await api.tellraw(playerName, formatMultiMessage([
+      { text: "Welcome ", color: "gold" },
+      { text: playerName, color: "aqua", bold: true },
+      { text: " to the server!", color: "gold" }
+    ]));
+  }
+}
+```
+
+<div className="not-prose">
+    <Button href="/modules" variant="text" arrow="right">
+        <>Learn about Modules</>
+    </Button>
+</div>

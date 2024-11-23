@@ -1,0 +1,374 @@
+
+export const metadata = {
+    title: 'Events',
+    description:
+        'Learn how to handle Minecraft server events in your Enchanted modules.',
+}
+
+# Events
+
+Events allow your modules to respond to actions happening on your Minecraft server in real-time. {{ className: 'lead' }}
+
+## Event Basics
+
+Use the `@Event` decorator to handle Minecraft server events:
+
+```typescript {{ title: 'Basic Event Handler' }}
+@Module({
+  name: 'EventModule',
+  version: '1.0.0'
+})
+export class EventModule {
+  @Event('player_joined')
+  async handleJoin({ params }: ScriptContext) {
+    const { playerName, x, y, z, dimension } = params;
+    // Handle player join
+  }
+}
+```
+
+## Player Events
+
+Events related to player actions:
+
+<CodeGroup>
+
+    ```typescript {{ title: 'Join/Leave Events' }}
+    @Event('player_joined')
+    async onPlayerJoin({ params }: ScriptContext) {
+    const {
+    playerId,      // Player UUID
+    playerName,    // Player username
+    x, y, z,       // Coordinates
+    dimension,     // World dimension
+    ip,           // Player IP (if available)
+    version       // Client version
+} = params;
+}
+
+    @Event('player_left')
+    async onPlayerLeave({ params }: ScriptContext) {
+    const {
+    playerId,
+    playerName,
+    x, y, z,
+    dimension
+} = params;
+}
+    ```
+
+    ```typescript {{ title: 'Death/Respawn Events' }}
+    @Event('player_death')
+    async onPlayerDeath({ params }: ScriptContext) {
+    const {
+    playerId,
+    playerName,
+    deathMessage,   // Localized death message
+    attackerId,     // UUID of attacker (if any)
+    attackerType,   // Type of attacker
+    x, y, z,
+    dimension
+} = params;
+}
+
+    @Event('player_respawned')
+    async onPlayerRespawn({ params }: ScriptContext) {
+    const {
+    playerId,
+    playerName,
+    x, y, z,
+    dimension,
+    alive          // true if natural respawn
+} = params;
+}
+    ```
+
+    ```typescript {{ title: 'Chat Events' }}
+    @Event('player_chat')
+    async onPlayerChat({ params }: ScriptContext) {
+    const {
+    playerId,
+    playerName,
+    message        // Chat message content
+} = params;
+}
+    ```
+
+</CodeGroup>
+
+## Block Events
+
+Events related to block interactions:
+
+```typescript {{ title: 'Block Events' }}
+@Event('player_break_block_before')
+async onBlockBreak({ params }: ScriptContext) {
+  const {
+    playerId,
+    x, y, z,      // Block coordinates
+    block,        // Block type identifier
+  } = params;
+}
+
+@Event('player_use_block')
+async onBlockUse({ params }: ScriptContext) {
+  const {
+    playerId,
+    x, y, z,
+    block,
+    face         // Block face interacted with
+  } = params;
+}
+```
+
+## Combat Events
+
+Events related to combat and damage:
+
+```typescript {{ title: 'Combat Events' }}
+@Event('player_attack_entity')
+async onPlayerAttack({ params }: ScriptContext) {
+  const {
+    playerId,      // Attacker UUID
+    entityId,      // Target entity UUID
+    entityType,    // Type of entity
+    damage         // Amount of damage
+  } = params;
+}
+
+@Event('projectile_kill')
+async onProjectileKill({ params }: ScriptContext) {
+  const {
+    projectileType,  // Type of projectile
+    ownerId,         // Shooter UUID
+    ownerType,       // Type of shooter
+    target: {
+      entityId,      // Target UUID
+      entityType,    // Target type
+      x, y, z        // Death location
+    }
+  } = params;
+}
+```
+
+## Container Events
+
+Events for container interactions:
+
+```typescript {{ title: 'Container Events' }}
+@Event('container_interaction_start')
+async onContainerOpen({ params }: ScriptContext) {
+  const {
+    playerId,
+    playerName,
+    blockType,     // Container type
+    x, y, z,
+    dimension
+  } = params;
+}
+
+@Event('container_interaction_end')
+async onContainerClose({ params }: ScriptContext) {
+  const {
+    playerId,
+    playerName,
+    blockType,
+    x, y, z,
+    dimension
+  } = params;
+}
+```
+
+## Server Events
+
+Events related to server state:
+
+```typescript {{ title: 'Server Events' }}
+@Event('server_starting')
+async onServerStarting() {
+  // Server is starting up
+}
+
+@Event('server_started')
+async onServerStarted() {
+  // Server has started
+}
+
+@Event('server_stopping')
+async onServerStopping() {
+  // Server is shutting down
+}
+
+@Event('server_before_save')
+async onBeforeSave() {
+  // Just before world save
+}
+```
+
+## Event Handler Patterns
+
+Common patterns for event handlers:
+
+<CodeGroup>
+
+    ```typescript {{ title: 'State Update' }}
+    @Event('player_death')
+    async updateStats({ params, kv }: ScriptContext) {
+    const { playerName } = params;
+
+    // Atomic update of player stats
+    const stats = await kv.get(['player', playerName, 'stats']);
+    await kv.atomic()
+    .check(stats)
+    .mutate({
+    type: 'set',
+    key: ['player', playerName, 'stats'],
+    value: {
+    ...stats.value,
+    deaths: (stats.value?.deaths || 0) + 1
+}
+})
+    .commit();
+}
+    ```
+
+    ```typescript {{ title: 'Notification' }}
+    @Event('player_joined')
+    async notifyPlayers({ params, api }: ScriptContext) {
+    const { playerName } = params;
+
+    // Broadcast to all players
+    await api.tellraw('@a', JSON.stringify({
+    text: `${playerName} joined the game`,
+    color: "yellow"
+}));
+}
+    ```
+
+    ```typescript {{ title: 'Multi-Event' }}
+    @Event('player_break_block_before')
+    @Event('player_use_block')
+    async logBlockInteraction({ params, log }: ScriptContext) {
+    const { playerName, block, x, y, z } = params;
+
+    // Log all block interactions
+    log(`${playerName} interacted with ${block} at ${x},${y},${z}`);
+}
+    ```
+
+</CodeGroup>
+
+## Complete Example
+
+Here's a comprehensive example showing various event handlers:
+
+```typescript {{ title: 'EventModule.ts' }}
+interface PlayerStats {
+  joins: number;
+  playtime: number;
+  lastSeen: string;
+  location: {
+    x: number;
+    y: number;
+    z: number;
+    dimension: string;
+  };
+}
+
+@Module({
+  name: 'PlayerTracker',
+  version: '1.0.0'
+})
+export class PlayerTracker {
+  private async getStats(
+    kv: Deno.Kv,
+    playerName: string
+  ): Promise<PlayerStats> {
+    const stats = await kv.get(['player', playerName, 'stats']);
+    return stats.value || {
+      joins: 0,
+      playtime: 0,
+      lastSeen: new Date().toISOString(),
+      location: { x: 0, y: 0, z: 0, dimension: 'overworld' }
+    };
+  }
+
+  @Event('player_joined')
+  async handleJoin({ params, kv, api, log }: ScriptContext) {
+    const { playerName, x, y, z, dimension } = params;
+
+    try {
+      // Update stats atomically
+      const stats = await this.getStats(kv, playerName);
+      const result = await kv.atomic()
+        .check({ key: ['player', playerName, 'stats'] })
+        .mutate({
+          type: 'set',
+          key: ['player', playerName, 'stats'],
+          value: {
+            ...stats,
+            joins: stats.joins + 1,
+            lastSeen: new Date().toISOString(),
+            location: { x, y, z, dimension }
+          }
+        })
+        .commit();
+
+      if (!result.ok) {
+        throw new Error('Failed to update stats');
+      }
+
+      // Welcome message
+      await api.tellraw(playerName, JSON.stringify({
+        text: `Welcome! Visit #${stats.joins + 1}`,
+        color: "gold"
+      }));
+
+    } catch (error) {
+      log(`Error in handleJoin: ${error.message}`);
+    }
+  }
+
+  @Event('player_death')
+  @Event('player_respawned')
+  async trackLocation({ params, kv, log }: ScriptContext) {
+    const { playerName, x, y, z, dimension } = params;
+
+    try {
+      const stats = await this.getStats(kv, playerName);
+      await kv.set(['player', playerName, 'stats'], {
+        ...stats,
+        location: { x, y, z, dimension }
+      });
+
+      log(`Updated location for ${playerName}`);
+    } catch (error) {
+      log(`Error updating location: ${error.message}`);
+    }
+  }
+
+  @Event('player_left')
+  async handleLeave({ params, kv, log }: ScriptContext) {
+    const { playerName, x, y, z, dimension } = params;
+
+    try {
+      const stats = await this.getStats(kv, playerName);
+      await kv.set(['player', playerName, 'stats'], {
+        ...stats,
+        lastSeen: new Date().toISOString(),
+        location: { x, y, z, dimension }
+      });
+
+      log(`${playerName} left at ${x},${y},${z}`);
+    } catch (error) {
+      log(`Error in handleLeave: ${error.message}`);
+    }
+  }
+}
+```
+
+<div className="not-prose">
+    <Button href="/modules" variant="text" arrow="right">
+        <>Learn about Modules</>
+    </Button>
+</div>

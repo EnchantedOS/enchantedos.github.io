@@ -1,0 +1,356 @@
+export const metadata = {
+    title: 'Script Context',
+    description:
+        'Learn about the ScriptContext object, which provides access to core Enchanted functionalities.',
+}
+
+# Script Context
+
+The ScriptContext object is passed to every module method, providing access to essential APIs and utilities. {{ className: 'lead' }}
+
+## Context Structure
+
+The ScriptContext interface provides various tools and utilities:
+
+```typescript {{ title: 'ScriptContext Interface' }}
+interface ScriptContext {
+  params: Record<string, unknown>;    // Event/command parameters
+  kv: Deno.Kv;                       // Key-value storage
+  api: MinecraftApi;                 // Minecraft API
+  auth: AuthContext;                 // Authentication utilities
+  log: (message: string) => void;    // Logging function
+  sendToPlayer: (playerId: string, data: unknown) => void;
+  broadcastPlayers: (data: unknown) => void;
+  messagePlayer: (playerId: string, message: string, options?: {
+    color?: string;
+    bold?: boolean;
+    italic?: boolean;
+    underlined?: boolean;
+    sound?: string;
+  }) => Promise<void>;
+  playerManager: PlayerManager;
+  players: PlayerData[];
+  isOnline: (playerName: string) => boolean;
+  isOperator: (playerName: string) => boolean;
+}
+```
+
+## Parameters
+
+The `params` object contains event-specific data:
+
+<CodeGroup>
+
+    ```typescript {{ title: 'Command Parameters' }}
+    @Command(['example'])
+    async handleCommand({ params }: ScriptContext) {
+    const {
+    sender,           // Command sender's name
+    args,             // Command arguments
+    senderType        // Type of sender
+} = params;
+}
+    ```
+
+    ```typescript {{ title: 'Event Parameters' }}
+    @Event('player_joined')
+    async handleJoin({ params }: ScriptContext) {
+    const {
+    playerId,         // Player UUID
+    playerName,       // Player username
+    x, y, z,          // Coordinates
+    dimension         // World dimension
+} = params;
+}
+    ```
+
+    ```typescript {{ title: 'Socket Parameters' }}
+    @Socket('example')
+    async handleSocket({ params }: ScriptContext) {
+    const {
+    token,            // Authentication token
+    socket,           // WebSocket connection
+    data              // Message data
+} = params;
+}
+    ```
+
+</CodeGroup>
+
+## Storage Access
+
+The `kv` property provides access to Deno KV storage:
+
+```typescript {{ title: 'Storage Operations' }}
+@Command(['save'])
+async saveData({ params, kv }: ScriptContext) {
+  // Read data
+  const data = await kv.get(['key', 'subkey']);
+
+  // Write data
+  await kv.set(['key', 'subkey'], value);
+
+  // Atomic operations
+  const result = await kv.atomic()
+    .check(previousValue)
+    .mutate({
+      type: 'set',
+      key: ['key'],
+      value: newValue
+    })
+    .commit();
+}
+```
+
+## Authentication
+
+The `auth` property provides authentication utilities:
+
+```typescript {{ title: 'Authentication Methods' }}
+@Socket('verify')
+async verifyUser({ params, auth }: ScriptContext) {
+  try {
+    // Verify JWT token
+    const payload = await auth.verifyToken(params.token);
+
+    // Check permissions
+    const hasPermission = await auth.checkPermission('player');
+
+    // Get player info
+    const playerId = await auth.getPlayerIdFromName(params.playerName);
+    const playerName = await auth.getPlayerNameFromId(playerId);
+
+    return { success: true, data: payload };
+  } catch (error) {
+    return { success: false, error: error.message };
+  }
+}
+```
+
+## Player Communication
+
+Methods for communicating with players:
+
+```typescript {{ title: 'Player Communication' }}
+@Event('player_death')
+async handleDeath({ params, messagePlayer, broadcastPlayers }: ScriptContext) {
+  // Send message to specific player
+  await messagePlayer(params.playerId, "You died!", {
+    color: "red",
+    bold: true,
+    sound: "entity.player.death"
+  });
+
+  // Broadcast to all players
+  broadcastPlayers({
+    type: 'player_died',
+    data: {
+      player: params.playerName,
+      location: {
+        x: params.x,
+        y: params.y,
+        z: params.z
+      }
+    }
+  });
+}
+```
+
+## Player Management
+
+Player-related utilities:
+
+```typescript {{ title: 'Player Management' }}
+@Command(['players'])
+async listPlayers({ players, isOnline, isOperator }: ScriptContext) {
+  // Get all players
+  const playerList = players.map(player => ({
+    name: player.name,
+    online: isOnline(player.name),
+    operator: isOperator(player.name),
+    joinTime: player.joinTime
+  }));
+
+  // Access player manager for more operations
+  const onlinePlayers = players.filter(p => isOnline(p.name));
+}
+```
+
+## Logging
+
+The `log` function for debugging and monitoring:
+
+```typescript {{ title: 'Logging Usage' }}
+@Event('player_joined')
+async handleJoin({ params, log }: ScriptContext) {
+  try {
+    // Basic logging
+    log(`Player joined: ${params.playerName}`);
+
+    // Debug information
+    log('Params:', JSON.stringify(params, null, 2));
+
+  } catch (error) {
+    // Error logging
+    log(`Error: ${error.message}`);
+    log(`Stack: ${error.stack}`);
+  }
+}
+```
+
+## Complete Example
+
+Here's a comprehensive example using various ScriptContext features:
+
+```typescript {{ title: 'CompleteModule.ts' }}
+@Module({
+  name: 'ServerManager',
+  version: '1.0.0'
+})
+export class ServerManager {
+  @Command(['status'])
+  @Permission('player')
+  async getStatus({
+    params,
+    api,
+    kv,
+    players,
+    isOnline,
+    isOperator,
+    log
+  }: ScriptContext) {
+    const { sender } = params;
+
+    try {
+      // Get server stats
+      const stats = await kv.get(['server', 'stats']);
+      const currentStats = stats.value || {
+        startTime: Date.now(),
+        players: 0,
+        uptime: 0
+      };
+
+      // Get online players
+      const onlinePlayers = players.filter(p => isOnline(p.name));
+      const operators = players.filter(p => isOperator(p.name));
+
+      // Update stats
+      await kv.set(['server', 'stats'], {
+        ...currentStats,
+        players: onlinePlayers.length,
+        uptime: Date.now() - currentStats.startTime
+      });
+
+      // Log request
+      log(`Status requested by ${sender}`);
+
+      // Send response
+      await api.tellraw(sender, JSON.stringify([
+        {
+          text: "=== Server Status ===\n",
+          color: "gold",
+          bold: true
+        },
+        {
+          text: `Players Online: ${onlinePlayers.length}\n`,
+          color: "yellow"
+        },
+        {
+          text: `Operators Online: ${operators.length}\n`,
+          color: "aqua"
+        },
+        {
+          text: `Uptime: ${Math.floor(currentStats.uptime / (1000 * 60))}m\n`,
+          color: "green"
+        }
+      ]));
+
+    } catch (error) {
+      log(`Error in status command: ${error.message}`);
+
+      await api.tellraw(sender, JSON.stringify({
+        text: `Error: ${error.message}`,
+        color: "red"
+      }));
+    }
+  }
+
+  @Socket('server_info')
+  async getServerInfo({
+    params,
+    kv,
+    auth,
+    players,
+    isOnline
+  }: ScriptContext) {
+    try {
+      // Verify authentication
+      if (!await auth.checkPermission('player')) {
+        return {
+          success: false,
+          error: 'Unauthorized'
+        };
+      }
+
+      // Get server info
+      const info = {
+        players: players.filter(p => isOnline(p.name)).map(p => ({
+          name: p.name,
+          joinTime: p.joinTime
+        })),
+        stats: await kv.get(['server', 'stats']).then(r => r.value)
+      };
+
+      return {
+        success: true,
+        data: info
+      };
+
+    } catch (error) {
+      return {
+        success: false,
+        error: error.message
+      };
+    }
+  }
+
+  @Event('player_joined')
+  async handleJoin({
+    params,
+    messagePlayer,
+    broadcastPlayers,
+    log
+  }: ScriptContext) {
+    const { playerId, playerName } = params;
+
+    try {
+      // Welcome message
+      await messagePlayer(playerId, "Welcome to the server!", {
+        color: "gold",
+        bold: true,
+        sound: "entity.player.levelup"
+      });
+
+      // Broadcast join
+      broadcastPlayers({
+        type: 'player_join',
+        data: {
+          player: playerName,
+          timestamp: Date.now()
+        }
+      });
+
+      log(`Player ${playerName} joined the server`);
+
+    } catch (error) {
+      log(`Error handling join: ${error.message}`);
+    }
+  }
+}
+```
+
+<div className="not-prose">
+    <Button href="/modules" variant="text" arrow="right">
+        <>Learn about Modules</>
+    </Button>
+</div>

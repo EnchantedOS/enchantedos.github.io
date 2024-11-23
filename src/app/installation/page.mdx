@@ -1,0 +1,212 @@
+export const metadata = {
+  title: 'Installation',
+  description:
+    'Learn how to install and configure Enchanted using Docker Compose and Deno.',
+}
+
+# Installation
+
+Get started with Enchanted by setting up the server environment using Docker Compose and Deno. This guide covers everything from initial setup to configuration and verification. {{ className: 'lead' }}
+
+<Note>
+  Enchanted requires Deno 1.41 or higher and Docker with Compose support. The server itself is designed to work alongside Minecraft 1.20.1+ with Fabric mod loader.
+</Note>
+
+## Prerequisites
+
+Before installing Enchanted, you'll need:
+- Deno 1.41 or higher
+- Docker Engine with Compose support
+- Minecraft Server (Java Edition 1.20.1+) with Fabric mod loader
+
+## Environment Setup
+
+First, create a `.env` file in your project root with the required configuration:
+
+```bash {{ title: '.env' }}
+DENO_KV_ACCESS_TOKEN=your-secure-token-here
+DENO_KV_URL=http://kv:4512
+DENORITE_ALLOWED_ORIGIN=http://localhost:3000
+DENORITE_SERVER_SECRET=your-server-secret
+DENORITE_JWT_SECRET=your-jwt-secret
+```
+
+<Note>
+    Make sure to replace all secret values with secure, randomly generated strings. Never commit your `.env` file to version control.
+</Note>
+
+## Docker Compose Configuration
+
+Create a `docker-compose.yaml` file to set up the Enchanted services:
+
+```yaml {{ title: 'docker-compose.yaml' }}
+services:
+  kv:
+    container_name: denorite-kv
+    image: ghcr.io/denoland/denokv:latest
+    command: --sqlite-path /data/denokv.sqlite serve --access-token ${DENO_KV_ACCESS_TOKEN}
+    volumes:
+      - kv-data:/data
+    expose:
+      - 4512
+    deploy:
+      resources:
+        limits:
+          cpus: '0.50'
+          memory: 512M
+        reservations:
+          cpus: '0.25'
+          memory: 256M
+
+  server:
+    container_name: denorite-srv
+    build: .
+    expose:
+      - 8082
+      - 8081
+    environment:
+      - DENO_KV_URL=${DENO_KV_URL}
+      - DENO_KV_ACCESS_TOKEN=${DENO_KV_ACCESS_TOKEN}
+      - DENORITE_ALLOWED_ORIGIN=${DENORITE_ALLOWED_ORIGIN}
+      - DENORITE_SERVER_SECRET=${DENORITE_SERVER_SECRET}
+      - DENORITE_JWT_SECRET=${DENORITE_JWT_SECRET}
+    volumes:
+      - modules-data:/app/modules
+    depends_on:
+      - kv
+    deploy:
+      resources:
+        limits:
+          cpus: '1.0'
+          memory: 1G
+        reservations:
+          cpus: '0.5'
+          memory: 512M
+```
+
+## Project Configuration
+
+Create a `deno.json` file for your development environment:
+
+```json {{ title: 'deno.json' }}
+{
+  "lock": false,
+  "tasks": {
+    "check": "deno fmt --check && deno lint && deno check **/*.ts && deno check **/*.tsx",
+    "start": "deno run -A --unstable-kv main.ts",
+    "build": "deno run -A --unstable-kv --unstable-broadcast-channel main.ts build",
+    "dev": "deno run -A --unstable-kv --watch=core/,api/ main.ts"
+  },
+  "imports": {
+    "$std/": "https://deno.land/std@0.216.0/"
+  },
+  "nodeModulesDir": "auto"
+}
+```
+
+## Project Structure
+
+Your project should follow this structure:
+
+```bash {{ title: 'Project Structure' }}
+enchanted-server/
+├── modules/              # Your Enchanted modules
+├── core/                # Core server files
+├── api/                 # API endpoints
+├── docker-compose.yaml  # Docker configuration
+├── .env                # Environment variables
+├── deno.json           # Deno configuration
+└── main.ts             # Server entry point
+```
+
+## Starting the Server
+
+<CodeGroup>
+
+    ```bash {{ title: 'Development' }}
+    # Start in development mode with hot reload
+    deno task dev
+    ```
+
+    ```bash {{ title: 'Production' }}
+    # Start Docker services
+    docker-compose up -d
+
+    # Check logs
+    docker-compose logs -f
+    ```
+
+    ```bash {{ title: 'Building' }}
+    # Build the server
+    deno task build
+
+    # Or compile to executable
+    deno task compile
+    ```
+
+</CodeGroup>
+
+## Verifying Your Installation
+
+To verify your installation is working correctly:
+
+1. Check if the KV service is running:
+```bash
+docker-compose ps kv
+```
+
+2. Verify the server container is running:
+```bash
+docker-compose ps server
+```
+
+3. Check server logs for module registration:
+```bash
+docker-compose logs -f server
+```
+
+4. Confirm ports 8081 and 8082 are accessible from your host machine.
+
+## Development Commands
+
+The following commands are available through Deno:
+
+```bash {{ title: 'Available Commands' }}
+# Start development server with hot reload
+deno task dev
+
+# Run formatter, linter, and type checks
+deno task check
+
+# Build for production
+deno task build
+
+# Create standalone executable
+deno task compile
+```
+
+## Troubleshooting Common Issues
+
+### KV Connection Failed
+If you're having issues connecting to the KV service:
+- Verify your DENO_KV_ACCESS_TOKEN matches in both the .env file and your configuration
+- Check if the KV container is running using `docker-compose ps`
+- Inspect the KV container logs with `docker-compose logs kv`
+
+### Module Hot Reload Not Working
+For hot reload issues:
+- Ensure you're using `deno task dev`
+- Check that your file structure matches the expected layout
+- Verify the `--watch` flag includes your module directory
+
+### Permission Errors
+For permission-related problems:
+- Run Deno with the `-A` flag for all permissions
+- Check container volume permissions
+- Verify your user has proper Docker access
+
+<div className="not-prose">
+    <Button href="/quickstart" variant="text" arrow="right">
+        <>Continue to Quickstart Guide</>
+    </Button>
+</div>

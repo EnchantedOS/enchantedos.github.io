@@ -1,0 +1,793 @@
+2:I[5824,["250","static/chunks/250-86e445a1e316c17d.js","371","static/chunks/371-9fd983c6f9223e2a.js","841","static/chunks/841-15946dcd10b62610.js","73","static/chunks/app/examples/player-stats/page-b7b61cc271c90ec9.js"],"Heading"]
+3:I[3801,["250","static/chunks/250-86e445a1e316c17d.js","371","static/chunks/371-9fd983c6f9223e2a.js","841","static/chunks/841-15946dcd10b62610.js","73","static/chunks/app/examples/player-stats/page-b7b61cc271c90ec9.js"],"Pre"]
+5:I[3801,["250","static/chunks/250-86e445a1e316c17d.js","371","static/chunks/371-9fd983c6f9223e2a.js","841","static/chunks/841-15946dcd10b62610.js","73","static/chunks/app/examples/player-stats/page-b7b61cc271c90ec9.js"],"Code"]
+8:I[3801,["250","static/chunks/250-86e445a1e316c17d.js","371","static/chunks/371-9fd983c6f9223e2a.js","841","static/chunks/841-15946dcd10b62610.js","73","static/chunks/app/examples/player-stats/page-b7b61cc271c90ec9.js"],"CodeGroup"]
+c:I[5250,["250","static/chunks/250-86e445a1e316c17d.js","371","static/chunks/371-9fd983c6f9223e2a.js","841","static/chunks/841-15946dcd10b62610.js","73","static/chunks/app/examples/player-stats/page-b7b61cc271c90ec9.js"],""]
+d:I[4052,["250","static/chunks/250-86e445a1e316c17d.js","371","static/chunks/371-9fd983c6f9223e2a.js","841","static/chunks/841-15946dcd10b62610.js","73","static/chunks/app/examples/player-stats/page-b7b61cc271c90ec9.js"],"Feedback"]
+e:I[5613,[],""]
+f:I[1778,[],""]
+4:T1ff2,interface PlayerStats {
+  general: {
+    firstJoin: string;
+    lastSeen: string;
+    playtime: number;
+    joinCount: number;
+  };
+  combat: {
+    kills: number;
+    deaths: number;
+    killstreak: number;
+    bestKillstreak: number;
+  };
+  blocks: {
+    broken: number;
+    placed: number;
+  };
+}
+
+interface SessionData {
+  startTime: number;
+  lastLocation?: {
+    x: number;
+    y: number;
+    z: number;
+    dimension: string;
+  };
+}
+
+@Module({
+  name: 'PlayerStats',
+  version: '1.0.0'
+})
+export class PlayerStatsModule {
+  // Get player stats
+  private async getStats(
+    kv: Deno.Kv,
+    playerName: string
+  ): Promise<PlayerStats> {
+    const stats = await kv.get(['stats', playerName]);
+    return stats.value || {
+      general: {
+        firstJoin: new Date().toISOString(),
+        lastSeen: new Date().toISOString(),
+        playtime: 0,
+        joinCount: 0
+      },
+      combat: {
+        kills: 0,
+        deaths: 0,
+        killstreak: 0,
+        bestKillstreak: 0
+      },
+      blocks: {
+        broken: 0,
+        placed: 0
+      }
+    };
+  }
+
+  // Update specific stat
+  private async updateStat(
+    kv: Deno.Kv,
+    playerName: string,
+    path: string[],
+    value: number | string,
+    operation: 'set' | 'increment' = 'set'
+  ): Promise<void> {
+    const stats = await this.getStats(kv, playerName);
+
+    let current = stats;
+    for (let i = 0; i < path.length - 1; i++) {
+      current = current[path[i]];
+    }
+
+    const lastKey = path[path.length - 1];
+    if (operation === 'increment') {
+      current[lastKey] += value;
+    } else {
+      current[lastKey] = value;
+    }
+
+    await kv.set(['stats', playerName], stats);
+  }
+
+  // Handle player join
+  @Event('player_joined')
+  async handleJoin({ params, kv }: ScriptContext) {
+    const { playerName } = params;
+
+    try {
+      const stats = await this.getStats(kv, playerName);
+
+      if (!stats.general.firstJoin) {
+        stats.general.firstJoin = new Date().toISOString();
+      }
+
+      // Update stats
+      stats.general.lastSeen = new Date().toISOString();
+      stats.general.joinCount++;
+
+      // Store session start
+      await kv.set(['stats', 'sessions', playerName], {
+        startTime: Date.now(),
+        lastLocation: {
+          x: params.x,
+          y: params.y,
+          z: params.z,
+          dimension: params.dimension
+        }
+      });
+
+      await kv.set(['stats', playerName], stats);
+
+    } catch (error) {
+      console.error(`Error updating join stats: ${error.message}`);
+    }
+  }
+
+  // Handle player leave
+  @Event('player_left')
+  async handleLeave({ params, kv }: ScriptContext) {
+    const { playerName } = params;
+
+    try {
+      // Get session data
+      const session = await kv.get(['stats', 'sessions', playerName]);
+      if (session.value) {
+        const duration = Date.now() - session.value.startTime;
+
+        // Update playtime
+        await this.updateStat(
+          kv,
+          playerName,
+          ['general', 'playtime'],
+          Math.floor(duration / 1000),
+          'increment'
+        );
+
+        // Clear session
+        await kv.delete(['stats', 'sessions', playerName]);
+      }
+
+    } catch (error) {
+      console.error(`Error updating leave stats: ${error.message}`);
+    }
+  }
+
+  // Handle player death
+  @Event('player_death')
+  async handleDeath({ params, kv }: ScriptContext) {
+    const { playerName, attackerId, attackerType } = params;
+
+    try {
+      // Update death stats
+      await this.updateStat(
+        kv,
+        playerName,
+        ['combat', 'deaths'],
+        1,
+        'increment'
+      );
+
+      // Reset killstreak
+      await this.updateStat(
+        kv,
+        playerName,
+        ['combat', 'killstreak'],
+        0,
+        'set'
+      );
+
+      // Update killer stats if it was a player
+      if (attackerType === 'player' && attackerId) {
+        await this.updateStat(
+          kv,
+          attackerId,
+          ['combat', 'kills'],
+          1,
+          'increment'
+        );
+
+        // Update killstreak
+        const killerStats = await this.getStats(kv, attackerId);
+        const newKillstreak = killerStats.combat.killstreak + 1;
+
+        await this.updateStat(
+          kv,
+          attackerId,
+          ['combat', 'killstreak'],
+          newKillstreak,
+          'set'
+        );
+
+        // Check best killstreak
+        if (newKillstreak > killerStats.combat.bestKillstreak) {
+          await this.updateStat(
+            kv,
+            attackerId,
+            ['combat', 'bestKillstreak'],
+            newKillstreak,
+            'set'
+          );
+        }
+      }
+
+    } catch (error) {
+      console.error(`Error updating death stats: ${error.message}`);
+    }
+  }
+
+  // Handle block break
+  @Event('player_break_block_after')
+  async handleBlockBreak({ params, kv }: ScriptContext) {
+    const { playerName } = params;
+
+    try {
+      await this.updateStat(
+        kv,
+        playerName,
+        ['blocks', 'broken'],
+        1,
+        'increment'
+      );
+    } catch (error) {
+      console.error(`Error updating block stats: ${error.message}`);
+    }
+  }
+
+  // View stats command
+  @Command(['stats'])
+  @Description('View your statistics')
+  @Permission('player')
+  async viewStats({ params, kv, api }: ScriptContext) {
+    const { sender } = params;
+
+    try {
+      const stats = await this.getStats(kv, sender);
+      const playtime = this.formatPlaytime(stats.general.playtime);
+
+      await api.tellraw(sender, JSON.stringify([
+        { text: "=== Your Stats ===\n", color: "gold", bold: true },
+        { text: `Playtime: ${playtime}\n`, color: "yellow" },
+        { text: `Joins: ${stats.general.joinCount}\n`, color: "yellow" },
+        { text: `K/D: ${stats.combat.kills}/${stats.combat.deaths}\n`, color: "red" },
+        { text: `Best Killstreak: ${stats.combat.bestKillstreak}\n`, color: "red" },
+        { text: `Blocks Broken: ${stats.blocks.broken}\n`, color: "aqua" },
+        { text: `First Join: ${new Date(stats.general.firstJoin).toLocaleDateString()}\n`, color: "gray" }
+      ]));
+
+    } catch (error) {
+      await api.tellraw(sender, JSON.stringify({
+        text: `Error: ${error.message}`,
+        color: "red"
+      }));
+    }
+  }
+
+  // Format playtime
+  private formatPlaytime(seconds: number): string {
+    const hours = Math.floor(seconds / 3600);
+    const minutes = Math.floor((seconds % 3600) / 60);
+
+    return hours > 0
+      ? `${hours}h ${minutes}m`
+      : `${minutes}m`;
+  }
+
+  // WebSocket endpoint for stats
+  @Socket('get_player_stats')
+  async getPlayerStats({ params, kv, auth }: ScriptContext) {
+    try {
+      // Verify authentication
+      if (!await auth.checkPermission('player')) {
+        return {
+          success: false,
+          error: 'Unauthorized'
+        };
+      }
+
+      const stats = await this.getStats(kv, params.playerName);
+
+      return {
+        success: true,
+        data: stats
+      };
+
+    } catch (error) {
+      return {
+        success: false,
+        error: error.message
+      };
+    }
+  }
+
+  // Get top players
+  @Socket('get_leaderboard')
+  async getLeaderboard({ params, kv, auth }: ScriptContext) {
+    try {
+      // Verify authentication
+      if (!await auth.checkPermission('player')) {
+        return {
+          success: false,
+          error: 'Unauthorized'
+        };
+      }
+
+      const { category = 'kills', limit = 10 } = params;
+
+      // Get all player stats
+      const players = await kv.get(['stats']);
+      const allStats = players.value || {};
+
+      // Sort players by category
+      const sorted = Object.entries(allStats)
+        .map(([name, stats]) => ({
+          name,
+          value: this.getStatValue(stats, category)
+        }))
+        .sort((a, b) => b.value - a.value)
+        .slice(0, limit);
+
+      return {
+        success: true,
+        data: sorted
+      };
+
+    } catch (error) {
+      return {
+        success: false,
+        error: error.message
+      };
+    }
+  }
+
+  // Get specific stat value from path
+  private getStatValue(stats: any, path: string): number {
+    const parts = path.split('.');
+    let value = stats;
+
+    for (const part of parts) {
+      value = value[part];
+    }
+
+    return value || 0;
+  }
+}
+6:T18b9e,<span><span style="color: var(--shiki-token-keyword)">interface</span><span style="color: var(--shiki-color-text)"> </span><span style="color: var(--shiki-token-function)">PlayerStats</span><span style="color: var(--shiki-color-text)"> {</span></span>
+<span><span style="color: var(--shiki-color-text)">  general</span><span style="color: var(--shiki-token-keyword)">:</span><span style="color: var(--shiki-color-text)"> {</span></span>
+<span><span style="color: var(--shiki-color-text)">    firstJoin</span><span style="color: var(--shiki-token-keyword)">:</span><span style="color: var(--shiki-color-text)"> </span><span style="color: var(--shiki-token-constant)">string</span><span style="color: var(--shiki-color-text)">;</span></span>
+<span><span style="color: var(--shiki-color-text)">    lastSeen</span><span style="color: var(--shiki-token-keyword)">:</span><span style="color: var(--shiki-color-text)"> </span><span style="color: var(--shiki-token-constant)">string</span><span style="color: var(--shiki-color-text)">;</span></span>
+<span><span style="color: var(--shiki-color-text)">    playtime</span><span style="color: var(--shiki-token-keyword)">:</span><span style="color: var(--shiki-color-text)"> </span><span style="color: var(--shiki-token-constant)">number</span><span style="color: var(--shiki-color-text)">;</span></span>
+<span><span style="color: var(--shiki-color-text)">    joinCount</span><span style="color: var(--shiki-token-keyword)">:</span><span style="color: var(--shiki-color-text)"> </span><span style="color: var(--shiki-token-constant)">number</span><span style="color: var(--shiki-color-text)">;</span></span>
+<span><span style="color: var(--shiki-color-text)">  };</span></span>
+<span><span style="color: var(--shiki-color-text)">  combat</span><span style="color: var(--shiki-token-keyword)">:</span><span style="color: var(--shiki-color-text)"> {</span></span>
+<span><span style="color: var(--shiki-color-text)">    kills</span><span style="color: var(--shiki-token-keyword)">:</span><span style="color: var(--shiki-color-text)"> </span><span style="color: var(--shiki-token-constant)">number</span><span style="color: var(--shiki-color-text)">;</span></span>
+<span><span style="color: var(--shiki-color-text)">    deaths</span><span style="color: var(--shiki-token-keyword)">:</span><span style="color: var(--shiki-color-text)"> </span><span style="color: var(--shiki-token-constant)">number</span><span style="color: var(--shiki-color-text)">;</span></span>
+<span><span style="color: var(--shiki-color-text)">    killstreak</span><span style="color: var(--shiki-token-keyword)">:</span><span style="color: var(--shiki-color-text)"> </span><span style="color: var(--shiki-token-constant)">number</span><span style="color: var(--shiki-color-text)">;</span></span>
+<span><span style="color: var(--shiki-color-text)">    bestKillstreak</span><span style="color: var(--shiki-token-keyword)">:</span><span style="color: var(--shiki-color-text)"> </span><span style="color: var(--shiki-token-constant)">number</span><span style="color: var(--shiki-color-text)">;</span></span>
+<span><span style="color: var(--shiki-color-text)">  };</span></span>
+<span><span style="color: var(--shiki-color-text)">  blocks</span><span style="color: var(--shiki-token-keyword)">:</span><span style="color: var(--shiki-color-text)"> {</span></span>
+<span><span style="color: var(--shiki-color-text)">    broken</span><span style="color: var(--shiki-token-keyword)">:</span><span style="color: var(--shiki-color-text)"> </span><span style="color: var(--shiki-token-constant)">number</span><span style="color: var(--shiki-color-text)">;</span></span>
+<span><span style="color: var(--shiki-color-text)">    placed</span><span style="color: var(--shiki-token-keyword)">:</span><span style="color: var(--shiki-color-text)"> </span><span style="color: var(--shiki-token-constant)">number</span><span style="color: var(--shiki-color-text)">;</span></span>
+<span><span style="color: var(--shiki-color-text)">  };</span></span>
+<span><span style="color: var(--shiki-color-text)">}</span></span>
+<span></span>
+<span><span style="color: var(--shiki-token-keyword)">interface</span><span style="color: var(--shiki-color-text)"> </span><span style="color: var(--shiki-token-function)">SessionData</span><span style="color: var(--shiki-color-text)"> {</span></span>
+<span><span style="color: var(--shiki-color-text)">  startTime</span><span style="color: var(--shiki-token-keyword)">:</span><span style="color: var(--shiki-color-text)"> </span><span style="color: var(--shiki-token-constant)">number</span><span style="color: var(--shiki-color-text)">;</span></span>
+<span><span style="color: var(--shiki-color-text)">  lastLocation</span><span style="color: var(--shiki-token-keyword)">?:</span><span style="color: var(--shiki-color-text)"> {</span></span>
+<span><span style="color: var(--shiki-color-text)">    x</span><span style="color: var(--shiki-token-keyword)">:</span><span style="color: var(--shiki-color-text)"> </span><span style="color: var(--shiki-token-constant)">number</span><span style="color: var(--shiki-color-text)">;</span></span>
+<span><span style="color: var(--shiki-color-text)">    y</span><span style="color: var(--shiki-token-keyword)">:</span><span style="color: var(--shiki-color-text)"> </span><span style="color: var(--shiki-token-constant)">number</span><span style="color: var(--shiki-color-text)">;</span></span>
+<span><span style="color: var(--shiki-color-text)">    z</span><span style="color: var(--shiki-token-keyword)">:</span><span style="color: var(--shiki-color-text)"> </span><span style="color: var(--shiki-token-constant)">number</span><span style="color: var(--shiki-color-text)">;</span></span>
+<span><span style="color: var(--shiki-color-text)">    dimension</span><span style="color: var(--shiki-token-keyword)">:</span><span style="color: var(--shiki-color-text)"> </span><span style="color: var(--shiki-token-constant)">string</span><span style="color: var(--shiki-color-text)">;</span></span>
+<span><span style="color: var(--shiki-color-text)">  };</span></span>
+<span><span style="color: var(--shiki-color-text)">}</span></span>
+<span></span>
+<span><span style="color: var(--shiki-color-text)">@</span><span style="color: var(--shiki-token-function)">Module</span><span style="color: var(--shiki-color-text)">({</span></span>
+<span><span style="color: var(--shiki-color-text)">  name</span><span style="color: var(--shiki-token-keyword)">:</span><span style="color: var(--shiki-color-text)"> </span><span style="color: var(--shiki-token-string-expression)">&#39;PlayerStats&#39;</span><span style="color: var(--shiki-token-punctuation)">,</span></span>
+<span><span style="color: var(--shiki-color-text)">  version</span><span style="color: var(--shiki-token-keyword)">:</span><span style="color: var(--shiki-color-text)"> </span><span style="color: var(--shiki-token-string-expression)">&#39;1.0.0&#39;</span></span>
+<span><span style="color: var(--shiki-color-text)">})</span></span>
+<span><span style="color: var(--shiki-token-keyword)">export</span><span style="color: var(--shiki-color-text)"> </span><span style="color: var(--shiki-token-keyword)">class</span><span style="color: var(--shiki-color-text)"> </span><span style="color: var(--shiki-token-function)">PlayerStatsModule</span><span style="color: var(--shiki-color-text)"> {</span></span>
+<span><span style="color: var(--shiki-color-text)">  </span><span style="color: var(--shiki-token-comment)">// Get player stats</span></span>
+<span><span style="color: var(--shiki-color-text)">  </span><span style="color: var(--shiki-token-keyword)">private</span><span style="color: var(--shiki-color-text)"> </span><span style="color: var(--shiki-token-keyword)">async</span><span style="color: var(--shiki-color-text)"> </span><span style="color: var(--shiki-token-function)">getStats</span><span style="color: var(--shiki-color-text)">(</span></span>
+<span><span style="color: var(--shiki-color-text)">    kv</span><span style="color: var(--shiki-token-keyword)">:</span><span style="color: var(--shiki-color-text)"> </span><span style="color: var(--shiki-token-function)">Deno</span><span style="color: var(--shiki-color-text)">.</span><span style="color: var(--shiki-token-function)">Kv</span><span style="color: var(--shiki-token-punctuation)">,</span></span>
+<span><span style="color: var(--shiki-color-text)">    playerName</span><span style="color: var(--shiki-token-keyword)">:</span><span style="color: var(--shiki-color-text)"> </span><span style="color: var(--shiki-token-constant)">string</span></span>
+<span><span style="color: var(--shiki-color-text)">  )</span><span style="color: var(--shiki-token-keyword)">:</span><span style="color: var(--shiki-color-text)"> </span><span style="color: var(--shiki-token-function)">Promise</span><span style="color: var(--shiki-color-text)">&lt;</span><span style="color: var(--shiki-token-function)">PlayerStats</span><span style="color: var(--shiki-color-text)">&gt; {</span></span>
+<span><span style="color: var(--shiki-color-text)">    </span><span style="color: var(--shiki-token-keyword)">const</span><span style="color: var(--shiki-color-text)"> </span><span style="color: var(--shiki-token-constant)">stats</span><span style="color: var(--shiki-color-text)"> </span><span style="color: var(--shiki-token-keyword)">=</span><span style="color: var(--shiki-color-text)"> </span><span style="color: var(--shiki-token-keyword)">await</span><span style="color: var(--shiki-color-text)"> </span><span style="color: var(--shiki-token-constant)">kv</span><span style="color: var(--shiki-token-function)">.get</span><span style="color: var(--shiki-color-text)">([</span><span style="color: var(--shiki-token-string-expression)">&#39;stats&#39;</span><span style="color: var(--shiki-token-punctuation)">,</span><span style="color: var(--shiki-color-text)"> playerName]);</span></span>
+<span><span style="color: var(--shiki-color-text)">    </span><span style="color: var(--shiki-token-keyword)">return</span><span style="color: var(--shiki-color-text)"> </span><span style="color: var(--shiki-token-constant)">stats</span><span style="color: var(--shiki-color-text)">.value </span><span style="color: var(--shiki-token-keyword)">||</span><span style="color: var(--shiki-color-text)"> {</span></span>
+<span><span style="color: var(--shiki-color-text)">      general</span><span style="color: var(--shiki-token-keyword)">:</span><span style="color: var(--shiki-color-text)"> {</span></span>
+<span><span style="color: var(--shiki-color-text)">        firstJoin</span><span style="color: var(--shiki-token-keyword)">:</span><span style="color: var(--shiki-color-text)"> </span><span style="color: var(--shiki-token-keyword)">new</span><span style="color: var(--shiki-color-text)"> </span><span style="color: var(--shiki-token-function)">Date</span><span style="color: var(--shiki-color-text)">()</span><span style="color: var(--shiki-token-function)">.toISOString</span><span style="color: var(--shiki-color-text)">()</span><span style="color: var(--shiki-token-punctuation)">,</span></span>
+<span><span style="color: var(--shiki-color-text)">        lastSeen</span><span style="color: var(--shiki-token-keyword)">:</span><span style="color: var(--shiki-color-text)"> </span><span style="color: var(--shiki-token-keyword)">new</span><span style="color: var(--shiki-color-text)"> </span><span style="color: var(--shiki-token-function)">Date</span><span style="color: var(--shiki-color-text)">()</span><span style="color: var(--shiki-token-function)">.toISOString</span><span style="color: var(--shiki-color-text)">()</span><span style="color: var(--shiki-token-punctuation)">,</span></span>
+<span><span style="color: var(--shiki-color-text)">        playtime</span><span style="color: var(--shiki-token-keyword)">:</span><span style="color: var(--shiki-color-text)"> </span><span style="color: var(--shiki-token-constant)">0</span><span style="color: var(--shiki-token-punctuation)">,</span></span>
+<span><span style="color: var(--shiki-color-text)">        joinCount</span><span style="color: var(--shiki-token-keyword)">:</span><span style="color: var(--shiki-color-text)"> </span><span style="color: var(--shiki-token-constant)">0</span></span>
+<span><span style="color: var(--shiki-color-text)">      }</span><span style="color: var(--shiki-token-punctuation)">,</span></span>
+<span><span style="color: var(--shiki-color-text)">      combat</span><span style="color: var(--shiki-token-keyword)">:</span><span style="color: var(--shiki-color-text)"> {</span></span>
+<span><span style="color: var(--shiki-color-text)">        kills</span><span style="color: var(--shiki-token-keyword)">:</span><span style="color: var(--shiki-color-text)"> </span><span style="color: var(--shiki-token-constant)">0</span><span style="color: var(--shiki-token-punctuation)">,</span></span>
+<span><span style="color: var(--shiki-color-text)">        deaths</span><span style="color: var(--shiki-token-keyword)">:</span><span style="color: var(--shiki-color-text)"> </span><span style="color: var(--shiki-token-constant)">0</span><span style="color: var(--shiki-token-punctuation)">,</span></span>
+<span><span style="color: var(--shiki-color-text)">        killstreak</span><span style="color: var(--shiki-token-keyword)">:</span><span style="color: var(--shiki-color-text)"> </span><span style="color: var(--shiki-token-constant)">0</span><span style="color: var(--shiki-token-punctuation)">,</span></span>
+<span><span style="color: var(--shiki-color-text)">        bestKillstreak</span><span style="color: var(--shiki-token-keyword)">:</span><span style="color: var(--shiki-color-text)"> </span><span style="color: var(--shiki-token-constant)">0</span></span>
+<span><span style="color: var(--shiki-color-text)">      }</span><span style="color: var(--shiki-token-punctuation)">,</span></span>
+<span><span style="color: var(--shiki-color-text)">      blocks</span><span style="color: var(--shiki-token-keyword)">:</span><span style="color: var(--shiki-color-text)"> {</span></span>
+<span><span style="color: var(--shiki-color-text)">        broken</span><span style="color: var(--shiki-token-keyword)">:</span><span style="color: var(--shiki-color-text)"> </span><span style="color: var(--shiki-token-constant)">0</span><span style="color: var(--shiki-token-punctuation)">,</span></span>
+<span><span style="color: var(--shiki-color-text)">        placed</span><span style="color: var(--shiki-token-keyword)">:</span><span style="color: var(--shiki-color-text)"> </span><span style="color: var(--shiki-token-constant)">0</span></span>
+<span><span style="color: var(--shiki-color-text)">      }</span></span>
+<span><span style="color: var(--shiki-color-text)">    };</span></span>
+<span><span style="color: var(--shiki-color-text)">  }</span></span>
+<span></span>
+<span><span style="color: var(--shiki-color-text)">  </span><span style="color: var(--shiki-token-comment)">// Update specific stat</span></span>
+<span><span style="color: var(--shiki-color-text)">  </span><span style="color: var(--shiki-token-keyword)">private</span><span style="color: var(--shiki-color-text)"> </span><span style="color: var(--shiki-token-keyword)">async</span><span style="color: var(--shiki-color-text)"> </span><span style="color: var(--shiki-token-function)">updateStat</span><span style="color: var(--shiki-color-text)">(</span></span>
+<span><span style="color: var(--shiki-color-text)">    kv</span><span style="color: var(--shiki-token-keyword)">:</span><span style="color: var(--shiki-color-text)"> </span><span style="color: var(--shiki-token-function)">Deno</span><span style="color: var(--shiki-color-text)">.</span><span style="color: var(--shiki-token-function)">Kv</span><span style="color: var(--shiki-token-punctuation)">,</span></span>
+<span><span style="color: var(--shiki-color-text)">    playerName</span><span style="color: var(--shiki-token-keyword)">:</span><span style="color: var(--shiki-color-text)"> </span><span style="color: var(--shiki-token-constant)">string</span><span style="color: var(--shiki-token-punctuation)">,</span></span>
+<span><span style="color: var(--shiki-color-text)">    path</span><span style="color: var(--shiki-token-keyword)">:</span><span style="color: var(--shiki-color-text)"> </span><span style="color: var(--shiki-token-constant)">string</span><span style="color: var(--shiki-color-text)">[]</span><span style="color: var(--shiki-token-punctuation)">,</span></span>
+<span><span style="color: var(--shiki-color-text)">    value</span><span style="color: var(--shiki-token-keyword)">:</span><span style="color: var(--shiki-color-text)"> </span><span style="color: var(--shiki-token-constant)">number</span><span style="color: var(--shiki-color-text)"> </span><span style="color: var(--shiki-token-keyword)">|</span><span style="color: var(--shiki-color-text)"> </span><span style="color: var(--shiki-token-constant)">string</span><span style="color: var(--shiki-token-punctuation)">,</span></span>
+<span><span style="color: var(--shiki-color-text)">    operation</span><span style="color: var(--shiki-token-keyword)">:</span><span style="color: var(--shiki-color-text)"> </span><span style="color: var(--shiki-token-string-expression)">&#39;set&#39;</span><span style="color: var(--shiki-color-text)"> </span><span style="color: var(--shiki-token-keyword)">|</span><span style="color: var(--shiki-color-text)"> </span><span style="color: var(--shiki-token-string-expression)">&#39;increment&#39;</span><span style="color: var(--shiki-color-text)"> </span><span style="color: var(--shiki-token-keyword)">=</span><span style="color: var(--shiki-color-text)"> </span><span style="color: var(--shiki-token-string-expression)">&#39;set&#39;</span></span>
+<span><span style="color: var(--shiki-color-text)">  )</span><span style="color: var(--shiki-token-keyword)">:</span><span style="color: var(--shiki-color-text)"> </span><span style="color: var(--shiki-token-function)">Promise</span><span style="color: var(--shiki-color-text)">&lt;</span><span style="color: var(--shiki-token-constant)">void</span><span style="color: var(--shiki-color-text)">&gt; {</span></span>
+<span><span style="color: var(--shiki-color-text)">    </span><span style="color: var(--shiki-token-keyword)">const</span><span style="color: var(--shiki-color-text)"> </span><span style="color: var(--shiki-token-constant)">stats</span><span style="color: var(--shiki-color-text)"> </span><span style="color: var(--shiki-token-keyword)">=</span><span style="color: var(--shiki-color-text)"> </span><span style="color: var(--shiki-token-keyword)">await</span><span style="color: var(--shiki-color-text)"> </span><span style="color: var(--shiki-token-constant)">this</span><span style="color: var(--shiki-token-function)">.getStats</span><span style="color: var(--shiki-color-text)">(kv</span><span style="color: var(--shiki-token-punctuation)">,</span><span style="color: var(--shiki-color-text)"> playerName);</span></span>
+<span></span>
+<span><span style="color: var(--shiki-color-text)">    </span><span style="color: var(--shiki-token-keyword)">let</span><span style="color: var(--shiki-color-text)"> current </span><span style="color: var(--shiki-token-keyword)">=</span><span style="color: var(--shiki-color-text)"> stats;</span></span>
+<span><span style="color: var(--shiki-color-text)">    </span><span style="color: var(--shiki-token-keyword)">for</span><span style="color: var(--shiki-color-text)"> (</span><span style="color: var(--shiki-token-keyword)">let</span><span style="color: var(--shiki-color-text)"> i </span><span style="color: var(--shiki-token-keyword)">=</span><span style="color: var(--shiki-color-text)"> </span><span style="color: var(--shiki-token-constant)">0</span><span style="color: var(--shiki-color-text)">; i </span><span style="color: var(--shiki-token-keyword)">&lt;</span><span style="color: var(--shiki-color-text)"> </span><span style="color: var(--shiki-token-constant)">path</span><span style="color: var(--shiki-color-text)">.</span><span style="color: var(--shiki-token-constant)">length</span><span style="color: var(--shiki-color-text)"> </span><span style="color: var(--shiki-token-keyword)">-</span><span style="color: var(--shiki-color-text)"> </span><span style="color: var(--shiki-token-constant)">1</span><span style="color: var(--shiki-color-text)">; i</span><span style="color: var(--shiki-token-keyword)">++</span><span style="color: var(--shiki-color-text)">) {</span></span>
+<span><span style="color: var(--shiki-color-text)">      current </span><span style="color: var(--shiki-token-keyword)">=</span><span style="color: var(--shiki-color-text)"> current[path[i]];</span></span>
+<span><span style="color: var(--shiki-color-text)">    }</span></span>
+<span></span>
+<span><span style="color: var(--shiki-color-text)">    </span><span style="color: var(--shiki-token-keyword)">const</span><span style="color: var(--shiki-color-text)"> </span><span style="color: var(--shiki-token-constant)">lastKey</span><span style="color: var(--shiki-color-text)"> </span><span style="color: var(--shiki-token-keyword)">=</span><span style="color: var(--shiki-color-text)"> path[</span><span style="color: var(--shiki-token-constant)">path</span><span style="color: var(--shiki-color-text)">.</span><span style="color: var(--shiki-token-constant)">length</span><span style="color: var(--shiki-color-text)"> </span><span style="color: var(--shiki-token-keyword)">-</span><span style="color: var(--shiki-color-text)"> </span><span style="color: var(--shiki-token-constant)">1</span><span style="color: var(--shiki-color-text)">];</span></span>
+<span><span style="color: var(--shiki-color-text)">    </span><span style="color: var(--shiki-token-keyword)">if</span><span style="color: var(--shiki-color-text)"> (operation </span><span style="color: var(--shiki-token-keyword)">===</span><span style="color: var(--shiki-color-text)"> </span><span style="color: var(--shiki-token-string-expression)">&#39;increment&#39;</span><span style="color: var(--shiki-color-text)">) {</span></span>
+<span><span style="color: var(--shiki-color-text)">      current[lastKey] </span><span style="color: var(--shiki-token-keyword)">+=</span><span style="color: var(--shiki-color-text)"> value;</span></span>
+<span><span style="color: var(--shiki-color-text)">    } </span><span style="color: var(--shiki-token-keyword)">else</span><span style="color: var(--shiki-color-text)"> {</span></span>
+<span><span style="color: var(--shiki-color-text)">      current[lastKey] </span><span style="color: var(--shiki-token-keyword)">=</span><span style="color: var(--shiki-color-text)"> value;</span></span>
+<span><span style="color: var(--shiki-color-text)">    }</span></span>
+<span></span>
+<span><span style="color: var(--shiki-color-text)">    </span><span style="color: var(--shiki-token-keyword)">await</span><span style="color: var(--shiki-color-text)"> </span><span style="color: var(--shiki-token-constant)">kv</span><span style="color: var(--shiki-token-function)">.set</span><span style="color: var(--shiki-color-text)">([</span><span style="color: var(--shiki-token-string-expression)">&#39;stats&#39;</span><span style="color: var(--shiki-token-punctuation)">,</span><span style="color: var(--shiki-color-text)"> playerName]</span><span style="color: var(--shiki-token-punctuation)">,</span><span style="color: var(--shiki-color-text)"> stats);</span></span>
+<span><span style="color: var(--shiki-color-text)">  }</span></span>
+<span></span>
+<span><span style="color: var(--shiki-color-text)">  </span><span style="color: var(--shiki-token-comment)">// Handle player join</span></span>
+<span><span style="color: var(--shiki-color-text)">  @</span><span style="color: var(--shiki-token-function)">Event</span><span style="color: var(--shiki-color-text)">(</span><span style="color: var(--shiki-token-string-expression)">&#39;player_joined&#39;</span><span style="color: var(--shiki-color-text)">)</span></span>
+<span><span style="color: var(--shiki-color-text)">  </span><span style="color: var(--shiki-token-keyword)">async</span><span style="color: var(--shiki-color-text)"> </span><span style="color: var(--shiki-token-function)">handleJoin</span><span style="color: var(--shiki-color-text)">({ params</span><span style="color: var(--shiki-token-punctuation)">,</span><span style="color: var(--shiki-color-text)"> kv }</span><span style="color: var(--shiki-token-keyword)">:</span><span style="color: var(--shiki-color-text)"> </span><span style="color: var(--shiki-token-function)">ScriptContext</span><span style="color: var(--shiki-color-text)">) {</span></span>
+<span><span style="color: var(--shiki-color-text)">    </span><span style="color: var(--shiki-token-keyword)">const</span><span style="color: var(--shiki-color-text)"> { </span><span style="color: var(--shiki-token-constant)">playerName</span><span style="color: var(--shiki-color-text)"> } </span><span style="color: var(--shiki-token-keyword)">=</span><span style="color: var(--shiki-color-text)"> params;</span></span>
+<span></span>
+<span><span style="color: var(--shiki-color-text)">    </span><span style="color: var(--shiki-token-keyword)">try</span><span style="color: var(--shiki-color-text)"> {</span></span>
+<span><span style="color: var(--shiki-color-text)">      </span><span style="color: var(--shiki-token-keyword)">const</span><span style="color: var(--shiki-color-text)"> </span><span style="color: var(--shiki-token-constant)">stats</span><span style="color: var(--shiki-color-text)"> </span><span style="color: var(--shiki-token-keyword)">=</span><span style="color: var(--shiki-color-text)"> </span><span style="color: var(--shiki-token-keyword)">await</span><span style="color: var(--shiki-color-text)"> </span><span style="color: var(--shiki-token-constant)">this</span><span style="color: var(--shiki-token-function)">.getStats</span><span style="color: var(--shiki-color-text)">(kv</span><span style="color: var(--shiki-token-punctuation)">,</span><span style="color: var(--shiki-color-text)"> playerName);</span></span>
+<span></span>
+<span><span style="color: var(--shiki-color-text)">      </span><span style="color: var(--shiki-token-keyword)">if</span><span style="color: var(--shiki-color-text)"> (</span><span style="color: var(--shiki-token-keyword)">!</span><span style="color: var(--shiki-token-constant)">stats</span><span style="color: var(--shiki-color-text)">.</span><span style="color: var(--shiki-token-constant)">general</span><span style="color: var(--shiki-color-text)">.firstJoin) {</span></span>
+<span><span style="color: var(--shiki-color-text)">        </span><span style="color: var(--shiki-token-constant)">stats</span><span style="color: var(--shiki-color-text)">.</span><span style="color: var(--shiki-token-constant)">general</span><span style="color: var(--shiki-color-text)">.firstJoin </span><span style="color: var(--shiki-token-keyword)">=</span><span style="color: var(--shiki-color-text)"> </span><span style="color: var(--shiki-token-keyword)">new</span><span style="color: var(--shiki-color-text)"> </span><span style="color: var(--shiki-token-function)">Date</span><span style="color: var(--shiki-color-text)">()</span><span style="color: var(--shiki-token-function)">.toISOString</span><span style="color: var(--shiki-color-text)">();</span></span>
+<span><span style="color: var(--shiki-color-text)">      }</span></span>
+<span></span>
+<span><span style="color: var(--shiki-color-text)">      </span><span style="color: var(--shiki-token-comment)">// Update stats</span></span>
+<span><span style="color: var(--shiki-color-text)">      </span><span style="color: var(--shiki-token-constant)">stats</span><span style="color: var(--shiki-color-text)">.</span><span style="color: var(--shiki-token-constant)">general</span><span style="color: var(--shiki-color-text)">.lastSeen </span><span style="color: var(--shiki-token-keyword)">=</span><span style="color: var(--shiki-color-text)"> </span><span style="color: var(--shiki-token-keyword)">new</span><span style="color: var(--shiki-color-text)"> </span><span style="color: var(--shiki-token-function)">Date</span><span style="color: var(--shiki-color-text)">()</span><span style="color: var(--shiki-token-function)">.toISOString</span><span style="color: var(--shiki-color-text)">();</span></span>
+<span><span style="color: var(--shiki-color-text)">      </span><span style="color: var(--shiki-token-constant)">stats</span><span style="color: var(--shiki-color-text)">.</span><span style="color: var(--shiki-token-constant)">general</span><span style="color: var(--shiki-color-text)">.joinCount</span><span style="color: var(--shiki-token-keyword)">++</span><span style="color: var(--shiki-color-text)">;</span></span>
+<span></span>
+<span><span style="color: var(--shiki-color-text)">      </span><span style="color: var(--shiki-token-comment)">// Store session start</span></span>
+<span><span style="color: var(--shiki-color-text)">      </span><span style="color: var(--shiki-token-keyword)">await</span><span style="color: var(--shiki-color-text)"> </span><span style="color: var(--shiki-token-constant)">kv</span><span style="color: var(--shiki-token-function)">.set</span><span style="color: var(--shiki-color-text)">([</span><span style="color: var(--shiki-token-string-expression)">&#39;stats&#39;</span><span style="color: var(--shiki-token-punctuation)">,</span><span style="color: var(--shiki-color-text)"> </span><span style="color: var(--shiki-token-string-expression)">&#39;sessions&#39;</span><span style="color: var(--shiki-token-punctuation)">,</span><span style="color: var(--shiki-color-text)"> playerName]</span><span style="color: var(--shiki-token-punctuation)">,</span><span style="color: var(--shiki-color-text)"> {</span></span>
+<span><span style="color: var(--shiki-color-text)">        startTime</span><span style="color: var(--shiki-token-keyword)">:</span><span style="color: var(--shiki-color-text)"> </span><span style="color: var(--shiki-token-constant)">Date</span><span style="color: var(--shiki-token-function)">.now</span><span style="color: var(--shiki-color-text)">()</span><span style="color: var(--shiki-token-punctuation)">,</span></span>
+<span><span style="color: var(--shiki-color-text)">        lastLocation</span><span style="color: var(--shiki-token-keyword)">:</span><span style="color: var(--shiki-color-text)"> {</span></span>
+<span><span style="color: var(--shiki-color-text)">          x</span><span style="color: var(--shiki-token-keyword)">:</span><span style="color: var(--shiki-color-text)"> </span><span style="color: var(--shiki-token-constant)">params</span><span style="color: var(--shiki-color-text)">.x</span><span style="color: var(--shiki-token-punctuation)">,</span></span>
+<span><span style="color: var(--shiki-color-text)">          y</span><span style="color: var(--shiki-token-keyword)">:</span><span style="color: var(--shiki-color-text)"> </span><span style="color: var(--shiki-token-constant)">params</span><span style="color: var(--shiki-color-text)">.y</span><span style="color: var(--shiki-token-punctuation)">,</span></span>
+<span><span style="color: var(--shiki-color-text)">          z</span><span style="color: var(--shiki-token-keyword)">:</span><span style="color: var(--shiki-color-text)"> </span><span style="color: var(--shiki-token-constant)">params</span><span style="color: var(--shiki-color-text)">.z</span><span style="color: var(--shiki-token-punctuation)">,</span></span>
+<span><span style="color: var(--shiki-color-text)">          dimension</span><span style="color: var(--shiki-token-keyword)">:</span><span style="color: var(--shiki-color-text)"> </span><span style="color: var(--shiki-token-constant)">params</span><span style="color: var(--shiki-color-text)">.dimension</span></span>
+<span><span style="color: var(--shiki-color-text)">        }</span></span>
+<span><span style="color: var(--shiki-color-text)">      });</span></span>
+<span></span>
+<span><span style="color: var(--shiki-color-text)">      </span><span style="color: var(--shiki-token-keyword)">await</span><span style="color: var(--shiki-color-text)"> </span><span style="color: var(--shiki-token-constant)">kv</span><span style="color: var(--shiki-token-function)">.set</span><span style="color: var(--shiki-color-text)">([</span><span style="color: var(--shiki-token-string-expression)">&#39;stats&#39;</span><span style="color: var(--shiki-token-punctuation)">,</span><span style="color: var(--shiki-color-text)"> playerName]</span><span style="color: var(--shiki-token-punctuation)">,</span><span style="color: var(--shiki-color-text)"> stats);</span></span>
+<span></span>
+<span><span style="color: var(--shiki-color-text)">    } </span><span style="color: var(--shiki-token-keyword)">catch</span><span style="color: var(--shiki-color-text)"> (error) {</span></span>
+<span><span style="color: var(--shiki-color-text)">      </span><span style="color: var(--shiki-token-constant)">console</span><span style="color: var(--shiki-token-function)">.error</span><span style="color: var(--shiki-color-text)">(</span><span style="color: var(--shiki-token-string-expression)">`Error updating join stats: </span><span style="color: var(--shiki-token-keyword)">${</span><span style="color: var(--shiki-token-constant)">error</span><span style="color: var(--shiki-color-text)">.message</span><span style="color: var(--shiki-token-keyword)">}</span><span style="color: var(--shiki-token-string-expression)">`</span><span style="color: var(--shiki-color-text)">);</span></span>
+<span><span style="color: var(--shiki-color-text)">    }</span></span>
+<span><span style="color: var(--shiki-color-text)">  }</span></span>
+<span></span>
+<span><span style="color: var(--shiki-color-text)">  </span><span style="color: var(--shiki-token-comment)">// Handle player leave</span></span>
+<span><span style="color: var(--shiki-color-text)">  @</span><span style="color: var(--shiki-token-function)">Event</span><span style="color: var(--shiki-color-text)">(</span><span style="color: var(--shiki-token-string-expression)">&#39;player_left&#39;</span><span style="color: var(--shiki-color-text)">)</span></span>
+<span><span style="color: var(--shiki-color-text)">  </span><span style="color: var(--shiki-token-keyword)">async</span><span style="color: var(--shiki-color-text)"> </span><span style="color: var(--shiki-token-function)">handleLeave</span><span style="color: var(--shiki-color-text)">({ params</span><span style="color: var(--shiki-token-punctuation)">,</span><span style="color: var(--shiki-color-text)"> kv }</span><span style="color: var(--shiki-token-keyword)">:</span><span style="color: var(--shiki-color-text)"> </span><span style="color: var(--shiki-token-function)">ScriptContext</span><span style="color: var(--shiki-color-text)">) {</span></span>
+<span><span style="color: var(--shiki-color-text)">    </span><span style="color: var(--shiki-token-keyword)">const</span><span style="color: var(--shiki-color-text)"> { </span><span style="color: var(--shiki-token-constant)">playerName</span><span style="color: var(--shiki-color-text)"> } </span><span style="color: var(--shiki-token-keyword)">=</span><span style="color: var(--shiki-color-text)"> params;</span></span>
+<span></span>
+<span><span style="color: var(--shiki-color-text)">    </span><span style="color: var(--shiki-token-keyword)">try</span><span style="color: var(--shiki-color-text)"> {</span></span>
+<span><span style="color: var(--shiki-color-text)">      </span><span style="color: var(--shiki-token-comment)">// Get session data</span></span>
+<span><span style="color: var(--shiki-color-text)">      </span><span style="color: var(--shiki-token-keyword)">const</span><span style="color: var(--shiki-color-text)"> </span><span style="color: var(--shiki-token-constant)">session</span><span style="color: var(--shiki-color-text)"> </span><span style="color: var(--shiki-token-keyword)">=</span><span style="color: var(--shiki-color-text)"> </span><span style="color: var(--shiki-token-keyword)">await</span><span style="color: var(--shiki-color-text)"> </span><span style="color: var(--shiki-token-constant)">kv</span><span style="color: var(--shiki-token-function)">.get</span><span style="color: var(--shiki-color-text)">([</span><span style="color: var(--shiki-token-string-expression)">&#39;stats&#39;</span><span style="color: var(--shiki-token-punctuation)">,</span><span style="color: var(--shiki-color-text)"> </span><span style="color: var(--shiki-token-string-expression)">&#39;sessions&#39;</span><span style="color: var(--shiki-token-punctuation)">,</span><span style="color: var(--shiki-color-text)"> playerName]);</span></span>
+<span><span style="color: var(--shiki-color-text)">      </span><span style="color: var(--shiki-token-keyword)">if</span><span style="color: var(--shiki-color-text)"> (</span><span style="color: var(--shiki-token-constant)">session</span><span style="color: var(--shiki-color-text)">.value) {</span></span>
+<span><span style="color: var(--shiki-color-text)">        </span><span style="color: var(--shiki-token-keyword)">const</span><span style="color: var(--shiki-color-text)"> </span><span style="color: var(--shiki-token-constant)">duration</span><span style="color: var(--shiki-color-text)"> </span><span style="color: var(--shiki-token-keyword)">=</span><span style="color: var(--shiki-color-text)"> </span><span style="color: var(--shiki-token-constant)">Date</span><span style="color: var(--shiki-token-function)">.now</span><span style="color: var(--shiki-color-text)">() </span><span style="color: var(--shiki-token-keyword)">-</span><span style="color: var(--shiki-color-text)"> </span><span style="color: var(--shiki-token-constant)">session</span><span style="color: var(--shiki-color-text)">.</span><span style="color: var(--shiki-token-constant)">value</span><span style="color: var(--shiki-color-text)">.startTime;</span></span>
+<span></span>
+<span><span style="color: var(--shiki-color-text)">        </span><span style="color: var(--shiki-token-comment)">// Update playtime</span></span>
+<span><span style="color: var(--shiki-color-text)">        </span><span style="color: var(--shiki-token-keyword)">await</span><span style="color: var(--shiki-color-text)"> </span><span style="color: var(--shiki-token-constant)">this</span><span style="color: var(--shiki-token-function)">.updateStat</span><span style="color: var(--shiki-color-text)">(</span></span>
+<span><span style="color: var(--shiki-color-text)">          kv</span><span style="color: var(--shiki-token-punctuation)">,</span></span>
+<span><span style="color: var(--shiki-color-text)">          playerName</span><span style="color: var(--shiki-token-punctuation)">,</span></span>
+<span><span style="color: var(--shiki-color-text)">          [</span><span style="color: var(--shiki-token-string-expression)">&#39;general&#39;</span><span style="color: var(--shiki-token-punctuation)">,</span><span style="color: var(--shiki-color-text)"> </span><span style="color: var(--shiki-token-string-expression)">&#39;playtime&#39;</span><span style="color: var(--shiki-color-text)">]</span><span style="color: var(--shiki-token-punctuation)">,</span></span>
+<span><span style="color: var(--shiki-color-text)">          </span><span style="color: var(--shiki-token-constant)">Math</span><span style="color: var(--shiki-token-function)">.floor</span><span style="color: var(--shiki-color-text)">(duration </span><span style="color: var(--shiki-token-keyword)">/</span><span style="color: var(--shiki-color-text)"> </span><span style="color: var(--shiki-token-constant)">1000</span><span style="color: var(--shiki-color-text)">)</span><span style="color: var(--shiki-token-punctuation)">,</span></span>
+<span><span style="color: var(--shiki-color-text)">          </span><span style="color: var(--shiki-token-string-expression)">&#39;increment&#39;</span></span>
+<span><span style="color: var(--shiki-color-text)">        );</span></span>
+<span></span>
+<span><span style="color: var(--shiki-color-text)">        </span><span style="color: var(--shiki-token-comment)">// Clear session</span></span>
+<span><span style="color: var(--shiki-color-text)">        </span><span style="color: var(--shiki-token-keyword)">await</span><span style="color: var(--shiki-color-text)"> </span><span style="color: var(--shiki-token-constant)">kv</span><span style="color: var(--shiki-token-function)">.delete</span><span style="color: var(--shiki-color-text)">([</span><span style="color: var(--shiki-token-string-expression)">&#39;stats&#39;</span><span style="color: var(--shiki-token-punctuation)">,</span><span style="color: var(--shiki-color-text)"> </span><span style="color: var(--shiki-token-string-expression)">&#39;sessions&#39;</span><span style="color: var(--shiki-token-punctuation)">,</span><span style="color: var(--shiki-color-text)"> playerName]);</span></span>
+<span><span style="color: var(--shiki-color-text)">      }</span></span>
+<span></span>
+<span><span style="color: var(--shiki-color-text)">    } </span><span style="color: var(--shiki-token-keyword)">catch</span><span style="color: var(--shiki-color-text)"> (error) {</span></span>
+<span><span style="color: var(--shiki-color-text)">      </span><span style="color: var(--shiki-token-constant)">console</span><span style="color: var(--shiki-token-function)">.error</span><span style="color: var(--shiki-color-text)">(</span><span style="color: var(--shiki-token-string-expression)">`Error updating leave stats: </span><span style="color: var(--shiki-token-keyword)">${</span><span style="color: var(--shiki-token-constant)">error</span><span style="color: var(--shiki-color-text)">.message</span><span style="color: var(--shiki-token-keyword)">}</span><span style="color: var(--shiki-token-string-expression)">`</span><span style="color: var(--shiki-color-text)">);</span></span>
+<span><span style="color: var(--shiki-color-text)">    }</span></span>
+<span><span style="color: var(--shiki-color-text)">  }</span></span>
+<span></span>
+<span><span style="color: var(--shiki-color-text)">  </span><span style="color: var(--shiki-token-comment)">// Handle player death</span></span>
+<span><span style="color: var(--shiki-color-text)">  @</span><span style="color: var(--shiki-token-function)">Event</span><span style="color: var(--shiki-color-text)">(</span><span style="color: var(--shiki-token-string-expression)">&#39;player_death&#39;</span><span style="color: var(--shiki-color-text)">)</span></span>
+<span><span style="color: var(--shiki-color-text)">  </span><span style="color: var(--shiki-token-keyword)">async</span><span style="color: var(--shiki-color-text)"> </span><span style="color: var(--shiki-token-function)">handleDeath</span><span style="color: var(--shiki-color-text)">({ params</span><span style="color: var(--shiki-token-punctuation)">,</span><span style="color: var(--shiki-color-text)"> kv }</span><span style="color: var(--shiki-token-keyword)">:</span><span style="color: var(--shiki-color-text)"> </span><span style="color: var(--shiki-token-function)">ScriptContext</span><span style="color: var(--shiki-color-text)">) {</span></span>
+<span><span style="color: var(--shiki-color-text)">    </span><span style="color: var(--shiki-token-keyword)">const</span><span style="color: var(--shiki-color-text)"> { </span><span style="color: var(--shiki-token-constant)">playerName</span><span style="color: var(--shiki-token-punctuation)">,</span><span style="color: var(--shiki-color-text)"> </span><span style="color: var(--shiki-token-constant)">attackerId</span><span style="color: var(--shiki-token-punctuation)">,</span><span style="color: var(--shiki-color-text)"> </span><span style="color: var(--shiki-token-constant)">attackerType</span><span style="color: var(--shiki-color-text)"> } </span><span style="color: var(--shiki-token-keyword)">=</span><span style="color: var(--shiki-color-text)"> params;</span></span>
+<span></span>
+<span><span style="color: var(--shiki-color-text)">    </span><span style="color: var(--shiki-token-keyword)">try</span><span style="color: var(--shiki-color-text)"> {</span></span>
+<span><span style="color: var(--shiki-color-text)">      </span><span style="color: var(--shiki-token-comment)">// Update death stats</span></span>
+<span><span style="color: var(--shiki-color-text)">      </span><span style="color: var(--shiki-token-keyword)">await</span><span style="color: var(--shiki-color-text)"> </span><span style="color: var(--shiki-token-constant)">this</span><span style="color: var(--shiki-token-function)">.updateStat</span><span style="color: var(--shiki-color-text)">(</span></span>
+<span><span style="color: var(--shiki-color-text)">        kv</span><span style="color: var(--shiki-token-punctuation)">,</span></span>
+<span><span style="color: var(--shiki-color-text)">        playerName</span><span style="color: var(--shiki-token-punctuation)">,</span></span>
+<span><span style="color: var(--shiki-color-text)">        [</span><span style="color: var(--shiki-token-string-expression)">&#39;combat&#39;</span><span style="color: var(--shiki-token-punctuation)">,</span><span style="color: var(--shiki-color-text)"> </span><span style="color: var(--shiki-token-string-expression)">&#39;deaths&#39;</span><span style="color: var(--shiki-color-text)">]</span><span style="color: var(--shiki-token-punctuation)">,</span></span>
+<span><span style="color: var(--shiki-color-text)">        </span><span style="color: var(--shiki-token-constant)">1</span><span style="color: var(--shiki-token-punctuation)">,</span></span>
+<span><span style="color: var(--shiki-color-text)">        </span><span style="color: var(--shiki-token-string-expression)">&#39;increment&#39;</span></span>
+<span><span style="color: var(--shiki-color-text)">      );</span></span>
+<span></span>
+<span><span style="color: var(--shiki-color-text)">      </span><span style="color: var(--shiki-token-comment)">// Reset killstreak</span></span>
+<span><span style="color: var(--shiki-color-text)">      </span><span style="color: var(--shiki-token-keyword)">await</span><span style="color: var(--shiki-color-text)"> </span><span style="color: var(--shiki-token-constant)">this</span><span style="color: var(--shiki-token-function)">.updateStat</span><span style="color: var(--shiki-color-text)">(</span></span>
+<span><span style="color: var(--shiki-color-text)">        kv</span><span style="color: var(--shiki-token-punctuation)">,</span></span>
+<span><span style="color: var(--shiki-color-text)">        playerName</span><span style="color: var(--shiki-token-punctuation)">,</span></span>
+<span><span style="color: var(--shiki-color-text)">        [</span><span style="color: var(--shiki-token-string-expression)">&#39;combat&#39;</span><span style="color: var(--shiki-token-punctuation)">,</span><span style="color: var(--shiki-color-text)"> </span><span style="color: var(--shiki-token-string-expression)">&#39;killstreak&#39;</span><span style="color: var(--shiki-color-text)">]</span><span style="color: var(--shiki-token-punctuation)">,</span></span>
+<span><span style="color: var(--shiki-color-text)">        </span><span style="color: var(--shiki-token-constant)">0</span><span style="color: var(--shiki-token-punctuation)">,</span></span>
+<span><span style="color: var(--shiki-color-text)">        </span><span style="color: var(--shiki-token-string-expression)">&#39;set&#39;</span></span>
+<span><span style="color: var(--shiki-color-text)">      );</span></span>
+<span></span>
+<span><span style="color: var(--shiki-color-text)">      </span><span style="color: var(--shiki-token-comment)">// Update killer stats if it was a player</span></span>
+<span><span style="color: var(--shiki-color-text)">      </span><span style="color: var(--shiki-token-keyword)">if</span><span style="color: var(--shiki-color-text)"> (attackerType </span><span style="color: var(--shiki-token-keyword)">===</span><span style="color: var(--shiki-color-text)"> </span><span style="color: var(--shiki-token-string-expression)">&#39;player&#39;</span><span style="color: var(--shiki-color-text)"> </span><span style="color: var(--shiki-token-keyword)">&amp;&amp;</span><span style="color: var(--shiki-color-text)"> attackerId) {</span></span>
+<span><span style="color: var(--shiki-color-text)">        </span><span style="color: var(--shiki-token-keyword)">await</span><span style="color: var(--shiki-color-text)"> </span><span style="color: var(--shiki-token-constant)">this</span><span style="color: var(--shiki-token-function)">.updateStat</span><span style="color: var(--shiki-color-text)">(</span></span>
+<span><span style="color: var(--shiki-color-text)">          kv</span><span style="color: var(--shiki-token-punctuation)">,</span></span>
+<span><span style="color: var(--shiki-color-text)">          attackerId</span><span style="color: var(--shiki-token-punctuation)">,</span></span>
+<span><span style="color: var(--shiki-color-text)">          [</span><span style="color: var(--shiki-token-string-expression)">&#39;combat&#39;</span><span style="color: var(--shiki-token-punctuation)">,</span><span style="color: var(--shiki-color-text)"> </span><span style="color: var(--shiki-token-string-expression)">&#39;kills&#39;</span><span style="color: var(--shiki-color-text)">]</span><span style="color: var(--shiki-token-punctuation)">,</span></span>
+<span><span style="color: var(--shiki-color-text)">          </span><span style="color: var(--shiki-token-constant)">1</span><span style="color: var(--shiki-token-punctuation)">,</span></span>
+<span><span style="color: var(--shiki-color-text)">          </span><span style="color: var(--shiki-token-string-expression)">&#39;increment&#39;</span></span>
+<span><span style="color: var(--shiki-color-text)">        );</span></span>
+<span></span>
+<span><span style="color: var(--shiki-color-text)">        </span><span style="color: var(--shiki-token-comment)">// Update killstreak</span></span>
+<span><span style="color: var(--shiki-color-text)">        </span><span style="color: var(--shiki-token-keyword)">const</span><span style="color: var(--shiki-color-text)"> </span><span style="color: var(--shiki-token-constant)">killerStats</span><span style="color: var(--shiki-color-text)"> </span><span style="color: var(--shiki-token-keyword)">=</span><span style="color: var(--shiki-color-text)"> </span><span style="color: var(--shiki-token-keyword)">await</span><span style="color: var(--shiki-color-text)"> </span><span style="color: var(--shiki-token-constant)">this</span><span style="color: var(--shiki-token-function)">.getStats</span><span style="color: var(--shiki-color-text)">(kv</span><span style="color: var(--shiki-token-punctuation)">,</span><span style="color: var(--shiki-color-text)"> attackerId);</span></span>
+<span><span style="color: var(--shiki-color-text)">        </span><span style="color: var(--shiki-token-keyword)">const</span><span style="color: var(--shiki-color-text)"> </span><span style="color: var(--shiki-token-constant)">newKillstreak</span><span style="color: var(--shiki-color-text)"> </span><span style="color: var(--shiki-token-keyword)">=</span><span style="color: var(--shiki-color-text)"> </span><span style="color: var(--shiki-token-constant)">killerStats</span><span style="color: var(--shiki-color-text)">.</span><span style="color: var(--shiki-token-constant)">combat</span><span style="color: var(--shiki-color-text)">.killstreak </span><span style="color: var(--shiki-token-keyword)">+</span><span style="color: var(--shiki-color-text)"> </span><span style="color: var(--shiki-token-constant)">1</span><span style="color: var(--shiki-color-text)">;</span></span>
+<span></span>
+<span><span style="color: var(--shiki-color-text)">        </span><span style="color: var(--shiki-token-keyword)">await</span><span style="color: var(--shiki-color-text)"> </span><span style="color: var(--shiki-token-constant)">this</span><span style="color: var(--shiki-token-function)">.updateStat</span><span style="color: var(--shiki-color-text)">(</span></span>
+<span><span style="color: var(--shiki-color-text)">          kv</span><span style="color: var(--shiki-token-punctuation)">,</span></span>
+<span><span style="color: var(--shiki-color-text)">          attackerId</span><span style="color: var(--shiki-token-punctuation)">,</span></span>
+<span><span style="color: var(--shiki-color-text)">          [</span><span style="color: var(--shiki-token-string-expression)">&#39;combat&#39;</span><span style="color: var(--shiki-token-punctuation)">,</span><span style="color: var(--shiki-color-text)"> </span><span style="color: var(--shiki-token-string-expression)">&#39;killstreak&#39;</span><span style="color: var(--shiki-color-text)">]</span><span style="color: var(--shiki-token-punctuation)">,</span></span>
+<span><span style="color: var(--shiki-color-text)">          newKillstreak</span><span style="color: var(--shiki-token-punctuation)">,</span></span>
+<span><span style="color: var(--shiki-color-text)">          </span><span style="color: var(--shiki-token-string-expression)">&#39;set&#39;</span></span>
+<span><span style="color: var(--shiki-color-text)">        );</span></span>
+<span></span>
+<span><span style="color: var(--shiki-color-text)">        </span><span style="color: var(--shiki-token-comment)">// Check best killstreak</span></span>
+<span><span style="color: var(--shiki-color-text)">        </span><span style="color: var(--shiki-token-keyword)">if</span><span style="color: var(--shiki-color-text)"> (newKillstreak </span><span style="color: var(--shiki-token-keyword)">&gt;</span><span style="color: var(--shiki-color-text)"> </span><span style="color: var(--shiki-token-constant)">killerStats</span><span style="color: var(--shiki-color-text)">.</span><span style="color: var(--shiki-token-constant)">combat</span><span style="color: var(--shiki-color-text)">.bestKillstreak) {</span></span>
+<span><span style="color: var(--shiki-color-text)">          </span><span style="color: var(--shiki-token-keyword)">await</span><span style="color: var(--shiki-color-text)"> </span><span style="color: var(--shiki-token-constant)">this</span><span style="color: var(--shiki-token-function)">.updateStat</span><span style="color: var(--shiki-color-text)">(</span></span>
+<span><span style="color: var(--shiki-color-text)">            kv</span><span style="color: var(--shiki-token-punctuation)">,</span></span>
+<span><span style="color: var(--shiki-color-text)">            attackerId</span><span style="color: var(--shiki-token-punctuation)">,</span></span>
+<span><span style="color: var(--shiki-color-text)">            [</span><span style="color: var(--shiki-token-string-expression)">&#39;combat&#39;</span><span style="color: var(--shiki-token-punctuation)">,</span><span style="color: var(--shiki-color-text)"> </span><span style="color: var(--shiki-token-string-expression)">&#39;bestKillstreak&#39;</span><span style="color: var(--shiki-color-text)">]</span><span style="color: var(--shiki-token-punctuation)">,</span></span>
+<span><span style="color: var(--shiki-color-text)">            newKillstreak</span><span style="color: var(--shiki-token-punctuation)">,</span></span>
+<span><span style="color: var(--shiki-color-text)">            </span><span style="color: var(--shiki-token-string-expression)">&#39;set&#39;</span></span>
+<span><span style="color: var(--shiki-color-text)">          );</span></span>
+<span><span style="color: var(--shiki-color-text)">        }</span></span>
+<span><span style="color: var(--shiki-color-text)">      }</span></span>
+<span></span>
+<span><span style="color: var(--shiki-color-text)">    } </span><span style="color: var(--shiki-token-keyword)">catch</span><span style="color: var(--shiki-color-text)"> (error) {</span></span>
+<span><span style="color: var(--shiki-color-text)">      </span><span style="color: var(--shiki-token-constant)">console</span><span style="color: var(--shiki-token-function)">.error</span><span style="color: var(--shiki-color-text)">(</span><span style="color: var(--shiki-token-string-expression)">`Error updating death stats: </span><span style="color: var(--shiki-token-keyword)">${</span><span style="color: var(--shiki-token-constant)">error</span><span style="color: var(--shiki-color-text)">.message</span><span style="color: var(--shiki-token-keyword)">}</span><span style="color: var(--shiki-token-string-expression)">`</span><span style="color: var(--shiki-color-text)">);</span></span>
+<span><span style="color: var(--shiki-color-text)">    }</span></span>
+<span><span style="color: var(--shiki-color-text)">  }</span></span>
+<span></span>
+<span><span style="color: var(--shiki-color-text)">  </span><span style="color: var(--shiki-token-comment)">// Handle block break</span></span>
+<span><span style="color: var(--shiki-color-text)">  @</span><span style="color: var(--shiki-token-function)">Event</span><span style="color: var(--shiki-color-text)">(</span><span style="color: var(--shiki-token-string-expression)">&#39;player_break_block_after&#39;</span><span style="color: var(--shiki-color-text)">)</span></span>
+<span><span style="color: var(--shiki-color-text)">  </span><span style="color: var(--shiki-token-keyword)">async</span><span style="color: var(--shiki-color-text)"> </span><span style="color: var(--shiki-token-function)">handleBlockBreak</span><span style="color: var(--shiki-color-text)">({ params</span><span style="color: var(--shiki-token-punctuation)">,</span><span style="color: var(--shiki-color-text)"> kv }</span><span style="color: var(--shiki-token-keyword)">:</span><span style="color: var(--shiki-color-text)"> </span><span style="color: var(--shiki-token-function)">ScriptContext</span><span style="color: var(--shiki-color-text)">) {</span></span>
+<span><span style="color: var(--shiki-color-text)">    </span><span style="color: var(--shiki-token-keyword)">const</span><span style="color: var(--shiki-color-text)"> { </span><span style="color: var(--shiki-token-constant)">playerName</span><span style="color: var(--shiki-color-text)"> } </span><span style="color: var(--shiki-token-keyword)">=</span><span style="color: var(--shiki-color-text)"> params;</span></span>
+<span></span>
+<span><span style="color: var(--shiki-color-text)">    </span><span style="color: var(--shiki-token-keyword)">try</span><span style="color: var(--shiki-color-text)"> {</span></span>
+<span><span style="color: var(--shiki-color-text)">      </span><span style="color: var(--shiki-token-keyword)">await</span><span style="color: var(--shiki-color-text)"> </span><span style="color: var(--shiki-token-constant)">this</span><span style="color: var(--shiki-token-function)">.updateStat</span><span style="color: var(--shiki-color-text)">(</span></span>
+<span><span style="color: var(--shiki-color-text)">        kv</span><span style="color: var(--shiki-token-punctuation)">,</span></span>
+<span><span style="color: var(--shiki-color-text)">        playerName</span><span style="color: var(--shiki-token-punctuation)">,</span></span>
+<span><span style="color: var(--shiki-color-text)">        [</span><span style="color: var(--shiki-token-string-expression)">&#39;blocks&#39;</span><span style="color: var(--shiki-token-punctuation)">,</span><span style="color: var(--shiki-color-text)"> </span><span style="color: var(--shiki-token-string-expression)">&#39;broken&#39;</span><span style="color: var(--shiki-color-text)">]</span><span style="color: var(--shiki-token-punctuation)">,</span></span>
+<span><span style="color: var(--shiki-color-text)">        </span><span style="color: var(--shiki-token-constant)">1</span><span style="color: var(--shiki-token-punctuation)">,</span></span>
+<span><span style="color: var(--shiki-color-text)">        </span><span style="color: var(--shiki-token-string-expression)">&#39;increment&#39;</span></span>
+<span><span style="color: var(--shiki-color-text)">      );</span></span>
+<span><span style="color: var(--shiki-color-text)">    } </span><span style="color: var(--shiki-token-keyword)">catch</span><span style="color: var(--shiki-color-text)"> (error) {</span></span>
+<span><span style="color: var(--shiki-color-text)">      </span><span style="color: var(--shiki-token-constant)">console</span><span style="color: var(--shiki-token-function)">.error</span><span style="color: var(--shiki-color-text)">(</span><span style="color: var(--shiki-token-string-expression)">`Error updating block stats: </span><span style="color: var(--shiki-token-keyword)">${</span><span style="color: var(--shiki-token-constant)">error</span><span style="color: var(--shiki-color-text)">.message</span><span style="color: var(--shiki-token-keyword)">}</span><span style="color: var(--shiki-token-string-expression)">`</span><span style="color: var(--shiki-color-text)">);</span></span>
+<span><span style="color: var(--shiki-color-text)">    }</span></span>
+<span><span style="color: var(--shiki-color-text)">  }</span></span>
+<span></span>
+<span><span style="color: var(--shiki-color-text)">  </span><span style="color: var(--shiki-token-comment)">// View stats command</span></span>
+<span><span style="color: var(--shiki-color-text)">  @</span><span style="color: var(--shiki-token-function)">Command</span><span style="color: var(--shiki-color-text)">([</span><span style="color: var(--shiki-token-string-expression)">&#39;stats&#39;</span><span style="color: var(--shiki-color-text)">])</span></span>
+<span><span style="color: var(--shiki-color-text)">  @</span><span style="color: var(--shiki-token-function)">Description</span><span style="color: var(--shiki-color-text)">(</span><span style="color: var(--shiki-token-string-expression)">&#39;View your statistics&#39;</span><span style="color: var(--shiki-color-text)">)</span></span>
+<span><span style="color: var(--shiki-color-text)">  @</span><span style="color: var(--shiki-token-function)">Permission</span><span style="color: var(--shiki-color-text)">(</span><span style="color: var(--shiki-token-string-expression)">&#39;player&#39;</span><span style="color: var(--shiki-color-text)">)</span></span>
+<span><span style="color: var(--shiki-color-text)">  </span><span style="color: var(--shiki-token-keyword)">async</span><span style="color: var(--shiki-color-text)"> </span><span style="color: var(--shiki-token-function)">viewStats</span><span style="color: var(--shiki-color-text)">({ params</span><span style="color: var(--shiki-token-punctuation)">,</span><span style="color: var(--shiki-color-text)"> kv</span><span style="color: var(--shiki-token-punctuation)">,</span><span style="color: var(--shiki-color-text)"> api }</span><span style="color: var(--shiki-token-keyword)">:</span><span style="color: var(--shiki-color-text)"> </span><span style="color: var(--shiki-token-function)">ScriptContext</span><span style="color: var(--shiki-color-text)">) {</span></span>
+<span><span style="color: var(--shiki-color-text)">    </span><span style="color: var(--shiki-token-keyword)">const</span><span style="color: var(--shiki-color-text)"> { </span><span style="color: var(--shiki-token-constant)">sender</span><span style="color: var(--shiki-color-text)"> } </span><span style="color: var(--shiki-token-keyword)">=</span><span style="color: var(--shiki-color-text)"> params;</span></span>
+<span></span>
+<span><span style="color: var(--shiki-color-text)">    </span><span style="color: var(--shiki-token-keyword)">try</span><span style="color: var(--shiki-color-text)"> {</span></span>
+<span><span style="color: var(--shiki-color-text)">      </span><span style="color: var(--shiki-token-keyword)">const</span><span style="color: var(--shiki-color-text)"> </span><span style="color: var(--shiki-token-constant)">stats</span><span style="color: var(--shiki-color-text)"> </span><span style="color: var(--shiki-token-keyword)">=</span><span style="color: var(--shiki-color-text)"> </span><span style="color: var(--shiki-token-keyword)">await</span><span style="color: var(--shiki-color-text)"> </span><span style="color: var(--shiki-token-constant)">this</span><span style="color: var(--shiki-token-function)">.getStats</span><span style="color: var(--shiki-color-text)">(kv</span><span style="color: var(--shiki-token-punctuation)">,</span><span style="color: var(--shiki-color-text)"> sender);</span></span>
+<span><span style="color: var(--shiki-color-text)">      </span><span style="color: var(--shiki-token-keyword)">const</span><span style="color: var(--shiki-color-text)"> </span><span style="color: var(--shiki-token-constant)">playtime</span><span style="color: var(--shiki-color-text)"> </span><span style="color: var(--shiki-token-keyword)">=</span><span style="color: var(--shiki-color-text)"> </span><span style="color: var(--shiki-token-constant)">this</span><span style="color: var(--shiki-token-function)">.formatPlaytime</span><span style="color: var(--shiki-color-text)">(</span><span style="color: var(--shiki-token-constant)">stats</span><span style="color: var(--shiki-color-text)">.</span><span style="color: var(--shiki-token-constant)">general</span><span style="color: var(--shiki-color-text)">.playtime);</span></span>
+<span></span>
+<span><span style="color: var(--shiki-color-text)">      </span><span style="color: var(--shiki-token-keyword)">await</span><span style="color: var(--shiki-color-text)"> </span><span style="color: var(--shiki-token-constant)">api</span><span style="color: var(--shiki-token-function)">.tellraw</span><span style="color: var(--shiki-color-text)">(sender</span><span style="color: var(--shiki-token-punctuation)">,</span><span style="color: var(--shiki-color-text)"> </span><span style="color: var(--shiki-token-constant)">JSON</span><span style="color: var(--shiki-token-function)">.stringify</span><span style="color: var(--shiki-color-text)">([</span></span>
+<span><span style="color: var(--shiki-color-text)">        { text</span><span style="color: var(--shiki-token-keyword)">:</span><span style="color: var(--shiki-color-text)"> </span><span style="color: var(--shiki-token-string-expression)">&quot;=== Your Stats ===\n&quot;</span><span style="color: var(--shiki-token-punctuation)">,</span><span style="color: var(--shiki-color-text)"> color</span><span style="color: var(--shiki-token-keyword)">:</span><span style="color: var(--shiki-color-text)"> </span><span style="color: var(--shiki-token-string-expression)">&quot;gold&quot;</span><span style="color: var(--shiki-token-punctuation)">,</span><span style="color: var(--shiki-color-text)"> bold</span><span style="color: var(--shiki-token-keyword)">:</span><span style="color: var(--shiki-color-text)"> </span><span style="color: var(--shiki-token-constant)">true</span><span style="color: var(--shiki-color-text)"> }</span><span style="color: var(--shiki-token-punctuation)">,</span></span>
+<span><span style="color: var(--shiki-color-text)">        { text</span><span style="color: var(--shiki-token-keyword)">:</span><span style="color: var(--shiki-color-text)"> </span><span style="color: var(--shiki-token-string-expression)">`Playtime: </span><span style="color: var(--shiki-token-keyword)">${</span><span style="color: var(--shiki-color-text)">playtime</span><span style="color: var(--shiki-token-keyword)">}</span><span style="color: var(--shiki-token-string-expression)">\n`</span><span style="color: var(--shiki-token-punctuation)">,</span><span style="color: var(--shiki-color-text)"> color</span><span style="color: var(--shiki-token-keyword)">:</span><span style="color: var(--shiki-color-text)"> </span><span style="color: var(--shiki-token-string-expression)">&quot;yellow&quot;</span><span style="color: var(--shiki-color-text)"> }</span><span style="color: var(--shiki-token-punctuation)">,</span></span>
+<span><span style="color: var(--shiki-color-text)">        { text</span><span style="color: var(--shiki-token-keyword)">:</span><span style="color: var(--shiki-color-text)"> </span><span style="color: var(--shiki-token-string-expression)">`Joins: </span><span style="color: var(--shiki-token-keyword)">${</span><span style="color: var(--shiki-token-constant)">stats</span><span style="color: var(--shiki-color-text)">.</span><span style="color: var(--shiki-token-constant)">general</span><span style="color: var(--shiki-color-text)">.joinCount</span><span style="color: var(--shiki-token-keyword)">}</span><span style="color: var(--shiki-token-string-expression)">\n`</span><span style="color: var(--shiki-token-punctuation)">,</span><span style="color: var(--shiki-color-text)"> color</span><span style="color: var(--shiki-token-keyword)">:</span><span style="color: var(--shiki-color-text)"> </span><span style="color: var(--shiki-token-string-expression)">&quot;yellow&quot;</span><span style="color: var(--shiki-color-text)"> }</span><span style="color: var(--shiki-token-punctuation)">,</span></span>
+<span><span style="color: var(--shiki-color-text)">        { text</span><span style="color: var(--shiki-token-keyword)">:</span><span style="color: var(--shiki-color-text)"> </span><span style="color: var(--shiki-token-string-expression)">`K/D: </span><span style="color: var(--shiki-token-keyword)">${</span><span style="color: var(--shiki-token-constant)">stats</span><span style="color: var(--shiki-color-text)">.</span><span style="color: var(--shiki-token-constant)">combat</span><span style="color: var(--shiki-color-text)">.kills</span><span style="color: var(--shiki-token-keyword)">}</span><span style="color: var(--shiki-token-string-expression)">/</span><span style="color: var(--shiki-token-keyword)">${</span><span style="color: var(--shiki-token-constant)">stats</span><span style="color: var(--shiki-color-text)">.</span><span style="color: var(--shiki-token-constant)">combat</span><span style="color: var(--shiki-color-text)">.deaths</span><span style="color: var(--shiki-token-keyword)">}</span><span style="color: var(--shiki-token-string-expression)">\n`</span><span style="color: var(--shiki-token-punctuation)">,</span><span style="color: var(--shiki-color-text)"> color</span><span style="color: var(--shiki-token-keyword)">:</span><span style="color: var(--shiki-color-text)"> </span><span style="color: var(--shiki-token-string-expression)">&quot;red&quot;</span><span style="color: var(--shiki-color-text)"> }</span><span style="color: var(--shiki-token-punctuation)">,</span></span>
+<span><span style="color: var(--shiki-color-text)">        { text</span><span style="color: var(--shiki-token-keyword)">:</span><span style="color: var(--shiki-color-text)"> </span><span style="color: var(--shiki-token-string-expression)">`Best Killstreak: </span><span style="color: var(--shiki-token-keyword)">${</span><span style="color: var(--shiki-token-constant)">stats</span><span style="color: var(--shiki-color-text)">.</span><span style="color: var(--shiki-token-constant)">combat</span><span style="color: var(--shiki-color-text)">.bestKillstreak</span><span style="color: var(--shiki-token-keyword)">}</span><span style="color: var(--shiki-token-string-expression)">\n`</span><span style="color: var(--shiki-token-punctuation)">,</span><span style="color: var(--shiki-color-text)"> color</span><span style="color: var(--shiki-token-keyword)">:</span><span style="color: var(--shiki-color-text)"> </span><span style="color: var(--shiki-token-string-expression)">&quot;red&quot;</span><span style="color: var(--shiki-color-text)"> }</span><span style="color: var(--shiki-token-punctuation)">,</span></span>
+<span><span style="color: var(--shiki-color-text)">        { text</span><span style="color: var(--shiki-token-keyword)">:</span><span style="color: var(--shiki-color-text)"> </span><span style="color: var(--shiki-token-string-expression)">`Blocks Broken: </span><span style="color: var(--shiki-token-keyword)">${</span><span style="color: var(--shiki-token-constant)">stats</span><span style="color: var(--shiki-color-text)">.</span><span style="color: var(--shiki-token-constant)">blocks</span><span style="color: var(--shiki-color-text)">.broken</span><span style="color: var(--shiki-token-keyword)">}</span><span style="color: var(--shiki-token-string-expression)">\n`</span><span style="color: var(--shiki-token-punctuation)">,</span><span style="color: var(--shiki-color-text)"> color</span><span style="color: var(--shiki-token-keyword)">:</span><span style="color: var(--shiki-color-text)"> </span><span style="color: var(--shiki-token-string-expression)">&quot;aqua&quot;</span><span style="color: var(--shiki-color-text)"> }</span><span style="color: var(--shiki-token-punctuation)">,</span></span>
+<span><span style="color: var(--shiki-color-text)">        { text</span><span style="color: var(--shiki-token-keyword)">:</span><span style="color: var(--shiki-color-text)"> </span><span style="color: var(--shiki-token-string-expression)">`First Join: </span><span style="color: var(--shiki-token-keyword)">${</span><span style="color: var(--shiki-token-keyword)">new</span><span style="color: var(--shiki-color-text)"> </span><span style="color: var(--shiki-token-function)">Date</span><span style="color: var(--shiki-color-text)">(</span><span style="color: var(--shiki-token-constant)">stats</span><span style="color: var(--shiki-color-text)">.</span><span style="color: var(--shiki-token-constant)">general</span><span style="color: var(--shiki-color-text)">.firstJoin)</span><span style="color: var(--shiki-token-function)">.toLocaleDateString</span><span style="color: var(--shiki-color-text)">()</span><span style="color: var(--shiki-token-keyword)">}</span><span style="color: var(--shiki-token-string-expression)">\n`</span><span style="color: var(--shiki-token-punctuation)">,</span><span style="color: var(--shiki-color-text)"> color</span><span style="color: var(--shiki-token-keyword)">:</span><span style="color: var(--shiki-color-text)"> </span><span style="color: var(--shiki-token-string-expression)">&quot;gray&quot;</span><span style="color: var(--shiki-color-text)"> }</span></span>
+<span><span style="color: var(--shiki-color-text)">      ]));</span></span>
+<span></span>
+<span><span style="color: var(--shiki-color-text)">    } </span><span style="color: var(--shiki-token-keyword)">catch</span><span style="color: var(--shiki-color-text)"> (error) {</span></span>
+<span><span style="color: var(--shiki-color-text)">      </span><span style="color: var(--shiki-token-keyword)">await</span><span style="color: var(--shiki-color-text)"> </span><span style="color: var(--shiki-token-constant)">api</span><span style="color: var(--shiki-token-function)">.tellraw</span><span style="color: var(--shiki-color-text)">(sender</span><span style="color: var(--shiki-token-punctuation)">,</span><span style="color: var(--shiki-color-text)"> </span><span style="color: var(--shiki-token-constant)">JSON</span><span style="color: var(--shiki-token-function)">.stringify</span><span style="color: var(--shiki-color-text)">({</span></span>
+<span><span style="color: var(--shiki-color-text)">        text</span><span style="color: var(--shiki-token-keyword)">:</span><span style="color: var(--shiki-color-text)"> </span><span style="color: var(--shiki-token-string-expression)">`Error: </span><span style="color: var(--shiki-token-keyword)">${</span><span style="color: var(--shiki-token-constant)">error</span><span style="color: var(--shiki-color-text)">.message</span><span style="color: var(--shiki-token-keyword)">}</span><span style="color: var(--shiki-token-string-expression)">`</span><span style="color: var(--shiki-token-punctuation)">,</span></span>
+<span><span style="color: var(--shiki-color-text)">        color</span><span style="color: var(--shiki-token-keyword)">:</span><span style="color: var(--shiki-color-text)"> </span><span style="color: var(--shiki-token-string-expression)">&quot;red&quot;</span></span>
+<span><span style="color: var(--shiki-color-text)">      }));</span></span>
+<span><span style="color: var(--shiki-color-text)">    }</span></span>
+<span><span style="color: var(--shiki-color-text)">  }</span></span>
+<span></span>
+<span><span style="color: var(--shiki-color-text)">  </span><span style="color: var(--shiki-token-comment)">// Format playtime</span></span>
+<span><span style="color: var(--shiki-color-text)">  </span><span style="color: var(--shiki-token-keyword)">private</span><span style="color: var(--shiki-color-text)"> </span><span style="color: var(--shiki-token-function)">formatPlaytime</span><span style="color: var(--shiki-color-text)">(seconds</span><span style="color: var(--shiki-token-keyword)">:</span><span style="color: var(--shiki-color-text)"> </span><span style="color: var(--shiki-token-constant)">number</span><span style="color: var(--shiki-color-text)">)</span><span style="color: var(--shiki-token-keyword)">:</span><span style="color: var(--shiki-color-text)"> </span><span style="color: var(--shiki-token-constant)">string</span><span style="color: var(--shiki-color-text)"> {</span></span>
+<span><span style="color: var(--shiki-color-text)">    </span><span style="color: var(--shiki-token-keyword)">const</span><span style="color: var(--shiki-color-text)"> </span><span style="color: var(--shiki-token-constant)">hours</span><span style="color: var(--shiki-color-text)"> </span><span style="color: var(--shiki-token-keyword)">=</span><span style="color: var(--shiki-color-text)"> </span><span style="color: var(--shiki-token-constant)">Math</span><span style="color: var(--shiki-token-function)">.floor</span><span style="color: var(--shiki-color-text)">(seconds </span><span style="color: var(--shiki-token-keyword)">/</span><span style="color: var(--shiki-color-text)"> </span><span style="color: var(--shiki-token-constant)">3600</span><span style="color: var(--shiki-color-text)">);</span></span>
+<span><span style="color: var(--shiki-color-text)">    </span><span style="color: var(--shiki-token-keyword)">const</span><span style="color: var(--shiki-color-text)"> </span><span style="color: var(--shiki-token-constant)">minutes</span><span style="color: var(--shiki-color-text)"> </span><span style="color: var(--shiki-token-keyword)">=</span><span style="color: var(--shiki-color-text)"> </span><span style="color: var(--shiki-token-constant)">Math</span><span style="color: var(--shiki-token-function)">.floor</span><span style="color: var(--shiki-color-text)">((seconds </span><span style="color: var(--shiki-token-keyword)">%</span><span style="color: var(--shiki-color-text)"> </span><span style="color: var(--shiki-token-constant)">3600</span><span style="color: var(--shiki-color-text)">) </span><span style="color: var(--shiki-token-keyword)">/</span><span style="color: var(--shiki-color-text)"> </span><span style="color: var(--shiki-token-constant)">60</span><span style="color: var(--shiki-color-text)">);</span></span>
+<span></span>
+<span><span style="color: var(--shiki-color-text)">    </span><span style="color: var(--shiki-token-keyword)">return</span><span style="color: var(--shiki-color-text)"> hours </span><span style="color: var(--shiki-token-keyword)">&gt;</span><span style="color: var(--shiki-color-text)"> </span><span style="color: var(--shiki-token-constant)">0</span></span>
+<span><span style="color: var(--shiki-color-text)">      </span><span style="color: var(--shiki-token-keyword)">?</span><span style="color: var(--shiki-color-text)"> </span><span style="color: var(--shiki-token-string-expression)">`</span><span style="color: var(--shiki-token-keyword)">${</span><span style="color: var(--shiki-color-text)">hours</span><span style="color: var(--shiki-token-keyword)">}</span><span style="color: var(--shiki-token-string-expression)">h </span><span style="color: var(--shiki-token-keyword)">${</span><span style="color: var(--shiki-color-text)">minutes</span><span style="color: var(--shiki-token-keyword)">}</span><span style="color: var(--shiki-token-string-expression)">m`</span></span>
+<span><span style="color: var(--shiki-color-text)">      </span><span style="color: var(--shiki-token-keyword)">:</span><span style="color: var(--shiki-color-text)"> </span><span style="color: var(--shiki-token-string-expression)">`</span><span style="color: var(--shiki-token-keyword)">${</span><span style="color: var(--shiki-color-text)">minutes</span><span style="color: var(--shiki-token-keyword)">}</span><span style="color: var(--shiki-token-string-expression)">m`</span><span style="color: var(--shiki-color-text)">;</span></span>
+<span><span style="color: var(--shiki-color-text)">  }</span></span>
+<span></span>
+<span><span style="color: var(--shiki-color-text)">  </span><span style="color: var(--shiki-token-comment)">// WebSocket endpoint for stats</span></span>
+<span><span style="color: var(--shiki-color-text)">  @</span><span style="color: var(--shiki-token-function)">Socket</span><span style="color: var(--shiki-color-text)">(</span><span style="color: var(--shiki-token-string-expression)">&#39;get_player_stats&#39;</span><span style="color: var(--shiki-color-text)">)</span></span>
+<span><span style="color: var(--shiki-color-text)">  </span><span style="color: var(--shiki-token-keyword)">async</span><span style="color: var(--shiki-color-text)"> </span><span style="color: var(--shiki-token-function)">getPlayerStats</span><span style="color: var(--shiki-color-text)">({ params</span><span style="color: var(--shiki-token-punctuation)">,</span><span style="color: var(--shiki-color-text)"> kv</span><span style="color: var(--shiki-token-punctuation)">,</span><span style="color: var(--shiki-color-text)"> auth }</span><span style="color: var(--shiki-token-keyword)">:</span><span style="color: var(--shiki-color-text)"> </span><span style="color: var(--shiki-token-function)">ScriptContext</span><span style="color: var(--shiki-color-text)">) {</span></span>
+<span><span style="color: var(--shiki-color-text)">    </span><span style="color: var(--shiki-token-keyword)">try</span><span style="color: var(--shiki-color-text)"> {</span></span>
+<span><span style="color: var(--shiki-color-text)">      </span><span style="color: var(--shiki-token-comment)">// Verify authentication</span></span>
+<span><span style="color: var(--shiki-color-text)">      </span><span style="color: var(--shiki-token-keyword)">if</span><span style="color: var(--shiki-color-text)"> (</span><span style="color: var(--shiki-token-keyword)">!await</span><span style="color: var(--shiki-color-text)"> </span><span style="color: var(--shiki-token-constant)">auth</span><span style="color: var(--shiki-token-function)">.checkPermission</span><span style="color: var(--shiki-color-text)">(</span><span style="color: var(--shiki-token-string-expression)">&#39;player&#39;</span><span style="color: var(--shiki-color-text)">)) {</span></span>
+<span><span style="color: var(--shiki-color-text)">        </span><span style="color: var(--shiki-token-keyword)">return</span><span style="color: var(--shiki-color-text)"> {</span></span>
+<span><span style="color: var(--shiki-color-text)">          success</span><span style="color: var(--shiki-token-keyword)">:</span><span style="color: var(--shiki-color-text)"> </span><span style="color: var(--shiki-token-constant)">false</span><span style="color: var(--shiki-token-punctuation)">,</span></span>
+<span><span style="color: var(--shiki-color-text)">          error</span><span style="color: var(--shiki-token-keyword)">:</span><span style="color: var(--shiki-color-text)"> </span><span style="color: var(--shiki-token-string-expression)">&#39;Unauthorized&#39;</span></span>
+<span><span style="color: var(--shiki-color-text)">        };</span></span>
+<span><span style="color: var(--shiki-color-text)">      }</span></span>
+<span></span>
+<span><span style="color: var(--shiki-color-text)">      </span><span style="color: var(--shiki-token-keyword)">const</span><span style="color: var(--shiki-color-text)"> </span><span style="color: var(--shiki-token-constant)">stats</span><span style="color: var(--shiki-color-text)"> </span><span style="color: var(--shiki-token-keyword)">=</span><span style="color: var(--shiki-color-text)"> </span><span style="color: var(--shiki-token-keyword)">await</span><span style="color: var(--shiki-color-text)"> </span><span style="color: var(--shiki-token-constant)">this</span><span style="color: var(--shiki-token-function)">.getStats</span><span style="color: var(--shiki-color-text)">(kv</span><span style="color: var(--shiki-token-punctuation)">,</span><span style="color: var(--shiki-color-text)"> </span><span style="color: var(--shiki-token-constant)">params</span><span style="color: var(--shiki-color-text)">.playerName);</span></span>
+<span></span>
+<span><span style="color: var(--shiki-color-text)">      </span><span style="color: var(--shiki-token-keyword)">return</span><span style="color: var(--shiki-color-text)"> {</span></span>
+<span><span style="color: var(--shiki-color-text)">        success</span><span style="color: var(--shiki-token-keyword)">:</span><span style="color: var(--shiki-color-text)"> </span><span style="color: var(--shiki-token-constant)">true</span><span style="color: var(--shiki-token-punctuation)">,</span></span>
+<span><span style="color: var(--shiki-color-text)">        data</span><span style="color: var(--shiki-token-keyword)">:</span><span style="color: var(--shiki-color-text)"> stats</span></span>
+<span><span style="color: var(--shiki-color-text)">      };</span></span>
+<span></span>
+<span><span style="color: var(--shiki-color-text)">    } </span><span style="color: var(--shiki-token-keyword)">catch</span><span style="color: var(--shiki-color-text)"> (error) {</span></span>
+<span><span style="color: var(--shiki-color-text)">      </span><span style="color: var(--shiki-token-keyword)">return</span><span style="color: var(--shiki-color-text)"> {</span></span>
+<span><span style="color: var(--shiki-color-text)">        success</span><span style="color: var(--shiki-token-keyword)">:</span><span style="color: var(--shiki-color-text)"> </span><span style="color: var(--shiki-token-constant)">false</span><span style="color: var(--shiki-token-punctuation)">,</span></span>
+<span><span style="color: var(--shiki-color-text)">        error</span><span style="color: var(--shiki-token-keyword)">:</span><span style="color: var(--shiki-color-text)"> </span><span style="color: var(--shiki-token-constant)">error</span><span style="color: var(--shiki-color-text)">.message</span></span>
+<span><span style="color: var(--shiki-color-text)">      };</span></span>
+<span><span style="color: var(--shiki-color-text)">    }</span></span>
+<span><span style="color: var(--shiki-color-text)">  }</span></span>
+<span></span>
+<span><span style="color: var(--shiki-color-text)">  </span><span style="color: var(--shiki-token-comment)">// Get top players</span></span>
+<span><span style="color: var(--shiki-color-text)">  @</span><span style="color: var(--shiki-token-function)">Socket</span><span style="color: var(--shiki-color-text)">(</span><span style="color: var(--shiki-token-string-expression)">&#39;get_leaderboard&#39;</span><span style="color: var(--shiki-color-text)">)</span></span>
+<span><span style="color: var(--shiki-color-text)">  </span><span style="color: var(--shiki-token-keyword)">async</span><span style="color: var(--shiki-color-text)"> </span><span style="color: var(--shiki-token-function)">getLeaderboard</span><span style="color: var(--shiki-color-text)">({ params</span><span style="color: var(--shiki-token-punctuation)">,</span><span style="color: var(--shiki-color-text)"> kv</span><span style="color: var(--shiki-token-punctuation)">,</span><span style="color: var(--shiki-color-text)"> auth }</span><span style="color: var(--shiki-token-keyword)">:</span><span style="color: var(--shiki-color-text)"> </span><span style="color: var(--shiki-token-function)">ScriptContext</span><span style="color: var(--shiki-color-text)">) {</span></span>
+<span><span style="color: var(--shiki-color-text)">    </span><span style="color: var(--shiki-token-keyword)">try</span><span style="color: var(--shiki-color-text)"> {</span></span>
+<span><span style="color: var(--shiki-color-text)">      </span><span style="color: var(--shiki-token-comment)">// Verify authentication</span></span>
+<span><span style="color: var(--shiki-color-text)">      </span><span style="color: var(--shiki-token-keyword)">if</span><span style="color: var(--shiki-color-text)"> (</span><span style="color: var(--shiki-token-keyword)">!await</span><span style="color: var(--shiki-color-text)"> </span><span style="color: var(--shiki-token-constant)">auth</span><span style="color: var(--shiki-token-function)">.checkPermission</span><span style="color: var(--shiki-color-text)">(</span><span style="color: var(--shiki-token-string-expression)">&#39;player&#39;</span><span style="color: var(--shiki-color-text)">)) {</span></span>
+<span><span style="color: var(--shiki-color-text)">        </span><span style="color: var(--shiki-token-keyword)">return</span><span style="color: var(--shiki-color-text)"> {</span></span>
+<span><span style="color: var(--shiki-color-text)">          success</span><span style="color: var(--shiki-token-keyword)">:</span><span style="color: var(--shiki-color-text)"> </span><span style="color: var(--shiki-token-constant)">false</span><span style="color: var(--shiki-token-punctuation)">,</span></span>
+<span><span style="color: var(--shiki-color-text)">          error</span><span style="color: var(--shiki-token-keyword)">:</span><span style="color: var(--shiki-color-text)"> </span><span style="color: var(--shiki-token-string-expression)">&#39;Unauthorized&#39;</span></span>
+<span><span style="color: var(--shiki-color-text)">        };</span></span>
+<span><span style="color: var(--shiki-color-text)">      }</span></span>
+<span></span>
+<span><span style="color: var(--shiki-color-text)">      </span><span style="color: var(--shiki-token-keyword)">const</span><span style="color: var(--shiki-color-text)"> { </span><span style="color: var(--shiki-token-constant)">category</span><span style="color: var(--shiki-color-text)"> </span><span style="color: var(--shiki-token-keyword)">=</span><span style="color: var(--shiki-color-text)"> </span><span style="color: var(--shiki-token-string-expression)">&#39;kills&#39;</span><span style="color: var(--shiki-token-punctuation)">,</span><span style="color: var(--shiki-color-text)"> </span><span style="color: var(--shiki-token-constant)">limit</span><span style="color: var(--shiki-color-text)"> </span><span style="color: var(--shiki-token-keyword)">=</span><span style="color: var(--shiki-color-text)"> </span><span style="color: var(--shiki-token-constant)">10</span><span style="color: var(--shiki-color-text)"> } </span><span style="color: var(--shiki-token-keyword)">=</span><span style="color: var(--shiki-color-text)"> params;</span></span>
+<span></span>
+<span><span style="color: var(--shiki-color-text)">      </span><span style="color: var(--shiki-token-comment)">// Get all player stats</span></span>
+<span><span style="color: var(--shiki-color-text)">      </span><span style="color: var(--shiki-token-keyword)">const</span><span style="color: var(--shiki-color-text)"> </span><span style="color: var(--shiki-token-constant)">players</span><span style="color: var(--shiki-color-text)"> </span><span style="color: var(--shiki-token-keyword)">=</span><span style="color: var(--shiki-color-text)"> </span><span style="color: var(--shiki-token-keyword)">await</span><span style="color: var(--shiki-color-text)"> </span><span style="color: var(--shiki-token-constant)">kv</span><span style="color: var(--shiki-token-function)">.get</span><span style="color: var(--shiki-color-text)">([</span><span style="color: var(--shiki-token-string-expression)">&#39;stats&#39;</span><span style="color: var(--shiki-color-text)">]);</span></span>
+<span><span style="color: var(--shiki-color-text)">      </span><span style="color: var(--shiki-token-keyword)">const</span><span style="color: var(--shiki-color-text)"> </span><span style="color: var(--shiki-token-constant)">allStats</span><span style="color: var(--shiki-color-text)"> </span><span style="color: var(--shiki-token-keyword)">=</span><span style="color: var(--shiki-color-text)"> </span><span style="color: var(--shiki-token-constant)">players</span><span style="color: var(--shiki-color-text)">.value </span><span style="color: var(--shiki-token-keyword)">||</span><span style="color: var(--shiki-color-text)"> {};</span></span>
+<span></span>
+<span><span style="color: var(--shiki-color-text)">      </span><span style="color: var(--shiki-token-comment)">// Sort players by category</span></span>
+<span><span style="color: var(--shiki-color-text)">      </span><span style="color: var(--shiki-token-keyword)">const</span><span style="color: var(--shiki-color-text)"> </span><span style="color: var(--shiki-token-constant)">sorted</span><span style="color: var(--shiki-color-text)"> </span><span style="color: var(--shiki-token-keyword)">=</span><span style="color: var(--shiki-color-text)"> </span><span style="color: var(--shiki-token-constant)">Object</span><span style="color: var(--shiki-token-function)">.entries</span><span style="color: var(--shiki-color-text)">(allStats)</span></span>
+<span><span style="color: var(--shiki-color-text)">        </span><span style="color: var(--shiki-token-function)">.map</span><span style="color: var(--shiki-color-text)">(([name</span><span style="color: var(--shiki-token-punctuation)">,</span><span style="color: var(--shiki-color-text)"> stats]) </span><span style="color: var(--shiki-token-keyword)">=&gt;</span><span style="color: var(--shiki-color-text)"> ({</span></span>
+<span><span style="color: var(--shiki-color-text)">          name</span><span style="color: var(--shiki-token-punctuation)">,</span></span>
+<span><span style="color: var(--shiki-color-text)">          value</span><span style="color: var(--shiki-token-keyword)">:</span><span style="color: var(--shiki-color-text)"> </span><span style="color: var(--shiki-token-constant)">this</span><span style="color: var(--shiki-token-function)">.getStatValue</span><span style="color: var(--shiki-color-text)">(stats</span><span style="color: var(--shiki-token-punctuation)">,</span><span style="color: var(--shiki-color-text)"> category)</span></span>
+<span><span style="color: var(--shiki-color-text)">        }))</span></span>
+<span><span style="color: var(--shiki-color-text)">        </span><span style="color: var(--shiki-token-function)">.sort</span><span style="color: var(--shiki-color-text)">((a</span><span style="color: var(--shiki-token-punctuation)">,</span><span style="color: var(--shiki-color-text)"> b) </span><span style="color: var(--shiki-token-keyword)">=&gt;</span><span style="color: var(--shiki-color-text)"> </span><span style="color: var(--shiki-token-constant)">b</span><span style="color: var(--shiki-color-text)">.value </span><span style="color: var(--shiki-token-keyword)">-</span><span style="color: var(--shiki-color-text)"> </span><span style="color: var(--shiki-token-constant)">a</span><span style="color: var(--shiki-color-text)">.value)</span></span>
+<span><span style="color: var(--shiki-color-text)">        </span><span style="color: var(--shiki-token-function)">.slice</span><span style="color: var(--shiki-color-text)">(</span><span style="color: var(--shiki-token-constant)">0</span><span style="color: var(--shiki-token-punctuation)">,</span><span style="color: var(--shiki-color-text)"> limit);</span></span>
+<span></span>
+<span><span style="color: var(--shiki-color-text)">      </span><span style="color: var(--shiki-token-keyword)">return</span><span style="color: var(--shiki-color-text)"> {</span></span>
+<span><span style="color: var(--shiki-color-text)">        success</span><span style="color: var(--shiki-token-keyword)">:</span><span style="color: var(--shiki-color-text)"> </span><span style="color: var(--shiki-token-constant)">true</span><span style="color: var(--shiki-token-punctuation)">,</span></span>
+<span><span style="color: var(--shiki-color-text)">        data</span><span style="color: var(--shiki-token-keyword)">:</span><span style="color: var(--shiki-color-text)"> sorted</span></span>
+<span><span style="color: var(--shiki-color-text)">      };</span></span>
+<span></span>
+<span><span style="color: var(--shiki-color-text)">    } </span><span style="color: var(--shiki-token-keyword)">catch</span><span style="color: var(--shiki-color-text)"> (error) {</span></span>
+<span><span style="color: var(--shiki-color-text)">      </span><span style="color: var(--shiki-token-keyword)">return</span><span style="color: var(--shiki-color-text)"> {</span></span>
+<span><span style="color: var(--shiki-color-text)">        success</span><span style="color: var(--shiki-token-keyword)">:</span><span style="color: var(--shiki-color-text)"> </span><span style="color: var(--shiki-token-constant)">false</span><span style="color: var(--shiki-token-punctuation)">,</span></span>
+<span><span style="color: var(--shiki-color-text)">        error</span><span style="color: var(--shiki-token-keyword)">:</span><span style="color: var(--shiki-color-text)"> </span><span style="color: var(--shiki-token-constant)">error</span><span style="color: var(--shiki-color-text)">.message</span></span>
+<span><span style="color: var(--shiki-color-text)">      };</span></span>
+<span><span style="color: var(--shiki-color-text)">    }</span></span>
+<span><span style="color: var(--shiki-color-text)">  }</span></span>
+<span></span>
+<span><span style="color: var(--shiki-color-text)">  </span><span style="color: var(--shiki-token-comment)">// Get specific stat value from path</span></span>
+<span><span style="color: var(--shiki-color-text)">  </span><span style="color: var(--shiki-token-keyword)">private</span><span style="color: var(--shiki-color-text)"> </span><span style="color: var(--shiki-token-function)">getStatValue</span><span style="color: var(--shiki-color-text)">(stats</span><span style="color: var(--shiki-token-keyword)">:</span><span style="color: var(--shiki-color-text)"> </span><span style="color: var(--shiki-token-constant)">any</span><span style="color: var(--shiki-token-punctuation)">,</span><span style="color: var(--shiki-color-text)"> path</span><span style="color: var(--shiki-token-keyword)">:</span><span style="color: var(--shiki-color-text)"> </span><span style="color: var(--shiki-token-constant)">string</span><span style="color: var(--shiki-color-text)">)</span><span style="color: var(--shiki-token-keyword)">:</span><span style="color: var(--shiki-color-text)"> </span><span style="color: var(--shiki-token-constant)">number</span><span style="color: var(--shiki-color-text)"> {</span></span>
+<span><span style="color: var(--shiki-color-text)">    </span><span style="color: var(--shiki-token-keyword)">const</span><span style="color: var(--shiki-color-text)"> </span><span style="color: var(--shiki-token-constant)">parts</span><span style="color: var(--shiki-color-text)"> </span><span style="color: var(--shiki-token-keyword)">=</span><span style="color: var(--shiki-color-text)"> </span><span style="color: var(--shiki-token-constant)">path</span><span style="color: var(--shiki-token-function)">.split</span><span style="color: var(--shiki-color-text)">(</span><span style="color: var(--shiki-token-string-expression)">&#39;.&#39;</span><span style="color: var(--shiki-color-text)">);</span></span>
+<span><span style="color: var(--shiki-color-text)">    </span><span style="color: var(--shiki-token-keyword)">let</span><span style="color: var(--shiki-color-text)"> value </span><span style="color: var(--shiki-token-keyword)">=</span><span style="color: var(--shiki-color-text)"> stats;</span></span>
+<span></span>
+<span><span style="color: var(--shiki-color-text)">    </span><span style="color: var(--shiki-token-keyword)">for</span><span style="color: var(--shiki-color-text)"> (</span><span style="color: var(--shiki-token-keyword)">const</span><span style="color: var(--shiki-color-text)"> </span><span style="color: var(--shiki-token-constant)">part</span><span style="color: var(--shiki-color-text)"> </span><span style="color: var(--shiki-token-keyword)">of</span><span style="color: var(--shiki-color-text)"> parts) {</span></span>
+<span><span style="color: var(--shiki-color-text)">      value </span><span style="color: var(--shiki-token-keyword)">=</span><span style="color: var(--shiki-color-text)"> value[part];</span></span>
+<span><span style="color: var(--shiki-color-text)">    }</span></span>
+<span></span>
+<span><span style="color: var(--shiki-color-text)">    </span><span style="color: var(--shiki-token-keyword)">return</span><span style="color: var(--shiki-color-text)"> value </span><span style="color: var(--shiki-token-keyword)">||</span><span style="color: var(--shiki-color-text)"> </span><span style="color: var(--shiki-token-constant)">0</span><span style="color: var(--shiki-color-text)">;</span></span>
+<span><span style="color: var(--shiki-color-text)">  }</span></span>
+<span><span style="color: var(--shiki-color-text)">}</span></span>
+<span></span>7:T131c,<span><span style="color: var(--shiki-token-keyword)">interface</span><span style="color: var(--shiki-color-text)"> </span><span style="color: var(--shiki-token-function)">PlayerStats</span><span style="color: var(--shiki-color-text)"> {</span></span>
+<span><span style="color: var(--shiki-color-text)">  general</span><span style="color: var(--shiki-token-keyword)">:</span><span style="color: var(--shiki-color-text)"> {</span></span>
+<span><span style="color: var(--shiki-color-text)">    firstJoin</span><span style="color: var(--shiki-token-keyword)">:</span><span style="color: var(--shiki-color-text)"> </span><span style="color: var(--shiki-token-constant)">string</span><span style="color: var(--shiki-color-text)">;     </span><span style="color: var(--shiki-token-comment)">// First server join</span></span>
+<span><span style="color: var(--shiki-color-text)">    lastSeen</span><span style="color: var(--shiki-token-keyword)">:</span><span style="color: var(--shiki-color-text)"> </span><span style="color: var(--shiki-token-constant)">string</span><span style="color: var(--shiki-color-text)">;      </span><span style="color: var(--shiki-token-comment)">// Last online</span></span>
+<span><span style="color: var(--shiki-color-text)">    playtime</span><span style="color: var(--shiki-token-keyword)">:</span><span style="color: var(--shiki-color-text)"> </span><span style="color: var(--shiki-token-constant)">number</span><span style="color: var(--shiki-color-text)">;      </span><span style="color: var(--shiki-token-comment)">// Total seconds played</span></span>
+<span><span style="color: var(--shiki-color-text)">    joinCount</span><span style="color: var(--shiki-token-keyword)">:</span><span style="color: var(--shiki-color-text)"> </span><span style="color: var(--shiki-token-constant)">number</span><span style="color: var(--shiki-color-text)">;     </span><span style="color: var(--shiki-token-comment)">// Total joins</span></span>
+<span><span style="color: var(--shiki-color-text)">  };</span></span>
+<span><span style="color: var(--shiki-color-text)">  combat</span><span style="color: var(--shiki-token-keyword)">:</span><span style="color: var(--shiki-color-text)"> {</span></span>
+<span><span style="color: var(--shiki-color-text)">    kills</span><span style="color: var(--shiki-token-keyword)">:</span><span style="color: var(--shiki-color-text)"> </span><span style="color: var(--shiki-token-constant)">number</span><span style="color: var(--shiki-color-text)">;         </span><span style="color: var(--shiki-token-comment)">// Player kills</span></span>
+<span><span style="color: var(--shiki-color-text)">    deaths</span><span style="color: var(--shiki-token-keyword)">:</span><span style="color: var(--shiki-color-text)"> </span><span style="color: var(--shiki-token-constant)">number</span><span style="color: var(--shiki-color-text)">;        </span><span style="color: var(--shiki-token-comment)">// Deaths</span></span>
+<span><span style="color: var(--shiki-color-text)">    killstreak</span><span style="color: var(--shiki-token-keyword)">:</span><span style="color: var(--shiki-color-text)"> </span><span style="color: var(--shiki-token-constant)">number</span><span style="color: var(--shiki-color-text)">;    </span><span style="color: var(--shiki-token-comment)">// Current killstreak</span></span>
+<span><span style="color: var(--shiki-color-text)">    bestKillstreak</span><span style="color: var(--shiki-token-keyword)">:</span><span style="color: var(--shiki-color-text)"> </span><span style="color: var(--shiki-token-constant)">number</span><span style="color: var(--shiki-color-text)">; </span><span style="color: var(--shiki-token-comment)">// Best killstreak</span></span>
+<span><span style="color: var(--shiki-color-text)">  };</span></span>
+<span><span style="color: var(--shiki-color-text)">  blocks</span><span style="color: var(--shiki-token-keyword)">:</span><span style="color: var(--shiki-color-text)"> {</span></span>
+<span><span style="color: var(--shiki-color-text)">    broken</span><span style="color: var(--shiki-token-keyword)">:</span><span style="color: var(--shiki-color-text)"> </span><span style="color: var(--shiki-token-constant)">number</span><span style="color: var(--shiki-color-text)">;        </span><span style="color: var(--shiki-token-comment)">// Blocks broken</span></span>
+<span><span style="color: var(--shiki-color-text)">    placed</span><span style="color: var(--shiki-token-keyword)">:</span><span style="color: var(--shiki-color-text)"> </span><span style="color: var(--shiki-token-constant)">number</span><span style="color: var(--shiki-color-text)">;        </span><span style="color: var(--shiki-token-comment)">// Blocks placed</span></span>
+<span><span style="color: var(--shiki-color-text)">  };</span></span>
+<span><span style="color: var(--shiki-color-text)">}</span></span>
+<span></span>9:Taa2,<span><span style="color: var(--shiki-token-comment)">// Get player stats</span></span>
+<span><span style="color: var(--shiki-token-constant)">socket</span><span style="color: var(--shiki-token-function)">.send</span><span style="color: var(--shiki-color-text)">({</span></span>
+<span><span style="color: var(--shiki-color-text)">eventType</span><span style="color: var(--shiki-token-keyword)">:</span><span style="color: var(--shiki-color-text)"> </span><span style="color: var(--shiki-token-string-expression)">&#39;get_player_stats&#39;</span><span style="color: var(--shiki-token-punctuation)">,</span></span>
+<span><span style="color: var(--shiki-color-text)">data</span><span style="color: var(--shiki-token-keyword)">:</span><span style="color: var(--shiki-color-text)"> {</span></span>
+<span><span style="color: var(--shiki-color-text)">playerName</span><span style="color: var(--shiki-token-keyword)">:</span><span style="color: var(--shiki-color-text)"> </span><span style="color: var(--shiki-token-string-expression)">&#39;Player123&#39;</span></span>
+<span><span style="color: var(--shiki-color-text)">}</span></span>
+<span><span style="color: var(--shiki-color-text)">});</span></span>
+<span></span>
+<span><span style="color: var(--shiki-token-comment)">// Get leaderboard</span></span>
+<span><span style="color: var(--shiki-token-constant)">socket</span><span style="color: var(--shiki-token-function)">.send</span><span style="color: var(--shiki-color-text)">({</span></span>
+<span><span style="color: var(--shiki-color-text)">eventType</span><span style="color: var(--shiki-token-keyword)">:</span><span style="color: var(--shiki-color-text)"> </span><span style="color: var(--shiki-token-string-expression)">&#39;get_leaderboard&#39;</span><span style="color: var(--shiki-token-punctuation)">,</span></span>
+<span><span style="color: var(--shiki-color-text)">data</span><span style="color: var(--shiki-token-keyword)">:</span><span style="color: var(--shiki-color-text)"> {</span></span>
+<span><span style="color: var(--shiki-color-text)">category</span><span style="color: var(--shiki-token-keyword)">:</span><span style="color: var(--shiki-color-text)"> </span><span style="color: var(--shiki-token-string-expression)">&#39;combat.kills&#39;</span><span style="color: var(--shiki-token-punctuation)">,</span></span>
+<span><span style="color: var(--shiki-color-text)">limit</span><span style="color: var(--shiki-token-keyword)">:</span><span style="color: var(--shiki-color-text)"> </span><span style="color: var(--shiki-token-constant)">10</span></span>
+<span><span style="color: var(--shiki-color-text)">}</span></span>
+<span><span style="color: var(--shiki-color-text)">});</span></span>
+<span></span>a:T641,<span><span style="color: var(--shiki-token-comment)">// Join/Leave tracking</span></span>
+<span><span style="color: var(--shiki-color-text)">@</span><span style="color: var(--shiki-token-function)">Event</span><span style="color: var(--shiki-color-text)">(</span><span style="color: var(--shiki-token-string-expression)">&#39;player_joined&#39;</span><span style="color: var(--shiki-color-text)">)</span></span>
+<span><span style="color: var(--shiki-color-text)">@</span><span style="color: var(--shiki-token-function)">Event</span><span style="color: var(--shiki-color-text)">(</span><span style="color: var(--shiki-token-string-expression)">&#39;player_left&#39;</span><span style="color: var(--shiki-color-text)">)</span></span>
+<span></span>
+<span><span style="color: var(--shiki-token-comment)">// Combat tracking</span></span>
+<span><span style="color: var(--shiki-color-text)">@</span><span style="color: var(--shiki-token-function)">Event</span><span style="color: var(--shiki-color-text)">(</span><span style="color: var(--shiki-token-string-expression)">&#39;player_death&#39;</span><span style="color: var(--shiki-color-text)">)</span></span>
+<span></span>
+<span><span style="color: var(--shiki-token-comment)">// Block tracking</span></span>
+<span><span style="color: var(--shiki-color-text)">@</span><span style="color: var(--shiki-token-function)">Event</span><span style="color: var(--shiki-color-text)">(</span><span style="color: var(--shiki-token-string-expression)">&#39;player_break_block_after&#39;</span><span style="color: var(--shiki-color-text)">)</span></span>
+<span></span>b:T2a9f,<span><span style="color: var(--shiki-token-keyword)">class</span><span style="color: var(--shiki-color-text)"> </span><span style="color: var(--shiki-token-function)">StatsClient</span><span style="color: var(--shiki-color-text)"> {</span></span>
+<span><span style="color: var(--shiki-color-text)">  </span><span style="color: var(--shiki-token-keyword)">constructor</span><span style="color: var(--shiki-color-text)">(socket</span><span style="color: var(--shiki-token-keyword)">:</span><span style="color: var(--shiki-color-text)"> </span><span style="color: var(--shiki-token-function)">WebSocket</span><span style="color: var(--shiki-color-text)">) {</span></span>
+<span><span style="color: var(--shiki-color-text)">    </span><span style="color: var(--shiki-token-constant)">this</span><span style="color: var(--shiki-color-text)">.socket </span><span style="color: var(--shiki-token-keyword)">=</span><span style="color: var(--shiki-color-text)"> socket;</span></span>
+<span><span style="color: var(--shiki-color-text)">  }</span></span>
+<span></span>
+<span><span style="color: var(--shiki-color-text)">  </span><span style="color: var(--shiki-token-comment)">// Get player stats</span></span>
+<span><span style="color: var(--shiki-color-text)">  </span><span style="color: var(--shiki-token-keyword)">async</span><span style="color: var(--shiki-color-text)"> </span><span style="color: var(--shiki-token-function)">getPlayerStats</span><span style="color: var(--shiki-color-text)">(playerName</span><span style="color: var(--shiki-token-keyword)">:</span><span style="color: var(--shiki-color-text)"> </span><span style="color: var(--shiki-token-constant)">string</span><span style="color: var(--shiki-color-text)">) {</span></span>
+<span><span style="color: var(--shiki-color-text)">    </span><span style="color: var(--shiki-token-keyword)">return</span><span style="color: var(--shiki-color-text)"> </span><span style="color: var(--shiki-token-constant)">this</span><span style="color: var(--shiki-token-function)">.sendRequest</span><span style="color: var(--shiki-color-text)">(</span><span style="color: var(--shiki-token-string-expression)">&#39;get_player_stats&#39;</span><span style="color: var(--shiki-token-punctuation)">,</span><span style="color: var(--shiki-color-text)"> {</span></span>
+<span><span style="color: var(--shiki-color-text)">      playerName</span></span>
+<span><span style="color: var(--shiki-color-text)">    });</span></span>
+<span><span style="color: var(--shiki-color-text)">  }</span></span>
+<span></span>
+<span><span style="color: var(--shiki-color-text)">  </span><span style="color: var(--shiki-token-comment)">// Get leaderboard</span></span>
+<span><span style="color: var(--shiki-color-text)">  </span><span style="color: var(--shiki-token-keyword)">async</span><span style="color: var(--shiki-color-text)"> </span><span style="color: var(--shiki-token-function)">getLeaderboard</span><span style="color: var(--shiki-color-text)">(category</span><span style="color: var(--shiki-token-keyword)">:</span><span style="color: var(--shiki-color-text)"> </span><span style="color: var(--shiki-token-constant)">string</span><span style="color: var(--shiki-token-punctuation)">,</span><span style="color: var(--shiki-color-text)"> limit</span><span style="color: var(--shiki-token-keyword)">:</span><span style="color: var(--shiki-color-text)"> </span><span style="color: var(--shiki-token-constant)">number</span><span style="color: var(--shiki-color-text)"> </span><span style="color: var(--shiki-token-keyword)">=</span><span style="color: var(--shiki-color-text)"> </span><span style="color: var(--shiki-token-constant)">10</span><span style="color: var(--shiki-color-text)">) {</span></span>
+<span><span style="color: var(--shiki-color-text)">    </span><span style="color: var(--shiki-token-keyword)">return</span><span style="color: var(--shiki-color-text)"> </span><span style="color: var(--shiki-token-constant)">this</span><span style="color: var(--shiki-token-function)">.sendRequest</span><span style="color: var(--shiki-color-text)">(</span><span style="color: var(--shiki-token-string-expression)">&#39;get_leaderboard&#39;</span><span style="color: var(--shiki-token-punctuation)">,</span><span style="color: var(--shiki-color-text)"> {</span></span>
+<span><span style="color: var(--shiki-color-text)">      category</span><span style="color: var(--shiki-token-punctuation)">,</span></span>
+<span><span style="color: var(--shiki-color-text)">      limit</span></span>
+<span><span style="color: var(--shiki-color-text)">    });</span></span>
+<span><span style="color: var(--shiki-color-text)">  }</span></span>
+<span></span>
+<span><span style="color: var(--shiki-color-text)">  </span><span style="color: var(--shiki-token-keyword)">private</span><span style="color: var(--shiki-color-text)"> </span><span style="color: var(--shiki-token-keyword)">async</span><span style="color: var(--shiki-color-text)"> </span><span style="color: var(--shiki-token-function)">sendRequest</span><span style="color: var(--shiki-color-text)">(eventType</span><span style="color: var(--shiki-token-keyword)">:</span><span style="color: var(--shiki-color-text)"> </span><span style="color: var(--shiki-token-constant)">string</span><span style="color: var(--shiki-token-punctuation)">,</span><span style="color: var(--shiki-color-text)"> data</span><span style="color: var(--shiki-token-keyword)">:</span><span style="color: var(--shiki-color-text)"> </span><span style="color: var(--shiki-token-constant)">any</span><span style="color: var(--shiki-color-text)">) {</span></span>
+<span><span style="color: var(--shiki-color-text)">    </span><span style="color: var(--shiki-token-keyword)">return</span><span style="color: var(--shiki-color-text)"> </span><span style="color: var(--shiki-token-keyword)">new</span><span style="color: var(--shiki-color-text)"> </span><span style="color: var(--shiki-token-constant)">Promise</span><span style="color: var(--shiki-color-text)">((resolve) </span><span style="color: var(--shiki-token-keyword)">=&gt;</span><span style="color: var(--shiki-color-text)"> {</span></span>
+<span><span style="color: var(--shiki-color-text)">      </span><span style="color: var(--shiki-token-constant)">this</span><span style="color: var(--shiki-token-function)">.</span><span style="color: var(--shiki-token-constant)">socket</span><span style="color: var(--shiki-token-function)">.send</span><span style="color: var(--shiki-color-text)">(</span><span style="color: var(--shiki-token-constant)">JSON</span><span style="color: var(--shiki-token-function)">.stringify</span><span style="color: var(--shiki-color-text)">({</span></span>
+<span><span style="color: var(--shiki-color-text)">        eventType</span><span style="color: var(--shiki-token-punctuation)">,</span></span>
+<span><span style="color: var(--shiki-color-text)">        data</span></span>
+<span><span style="color: var(--shiki-color-text)">      }));</span></span>
+<span></span>
+<span><span style="color: var(--shiki-color-text)">      </span><span style="color: var(--shiki-token-constant)">this</span><span style="color: var(--shiki-color-text)">.</span><span style="color: var(--shiki-token-constant)">socket</span><span style="color: var(--shiki-color-text)">.</span><span style="color: var(--shiki-token-function)">onmessage</span><span style="color: var(--shiki-color-text)"> </span><span style="color: var(--shiki-token-keyword)">=</span><span style="color: var(--shiki-color-text)"> (event) </span><span style="color: var(--shiki-token-keyword)">=&gt;</span><span style="color: var(--shiki-color-text)"> {</span></span>
+<span><span style="color: var(--shiki-color-text)">        </span><span style="color: var(--shiki-token-function)">resolve</span><span style="color: var(--shiki-color-text)">(</span><span style="color: var(--shiki-token-constant)">JSON</span><span style="color: var(--shiki-token-function)">.parse</span><span style="color: var(--shiki-color-text)">(</span><span style="color: var(--shiki-token-constant)">event</span><span style="color: var(--shiki-color-text)">.data));</span></span>
+<span><span style="color: var(--shiki-color-text)">      };</span></span>
+<span><span style="color: var(--shiki-color-text)">    });</span></span>
+<span><span style="color: var(--shiki-color-text)">  }</span></span>
+<span><span style="color: var(--shiki-color-text)">}</span></span>
+<span></span>
+<span><span style="color: var(--shiki-token-comment)">// Usage</span></span>
+<span><span style="color: var(--shiki-token-keyword)">const</span><span style="color: var(--shiki-color-text)"> </span><span style="color: var(--shiki-token-constant)">stats</span><span style="color: var(--shiki-color-text)"> </span><span style="color: var(--shiki-token-keyword)">=</span><span style="color: var(--shiki-color-text)"> </span><span style="color: var(--shiki-token-keyword)">new</span><span style="color: var(--shiki-color-text)"> </span><span style="color: var(--shiki-token-function)">StatsClient</span><span style="color: var(--shiki-color-text)">(socket);</span></span>
+<span></span>
+<span><span style="color: var(--shiki-token-comment)">// Get player stats</span></span>
+<span><span style="color: var(--shiki-token-keyword)">const</span><span style="color: var(--shiki-color-text)"> </span><span style="color: var(--shiki-token-constant)">playerStats</span><span style="color: var(--shiki-color-text)"> </span><span style="color: var(--shiki-token-keyword)">=</span><span style="color: var(--shiki-color-text)"> </span><span style="color: var(--shiki-token-keyword)">await</span><span style="color: var(--shiki-color-text)"> </span><span style="color: var(--shiki-token-constant)">stats</span><span style="color: var(--shiki-token-function)">.getPlayerStats</span><span style="color: var(--shiki-color-text)">(</span><span style="color: var(--shiki-token-string-expression)">&#39;Player123&#39;</span><span style="color: var(--shiki-color-text)">);</span></span>
+<span></span>
+<span><span style="color: var(--shiki-token-comment)">// Get kill leaderboard</span></span>
+<span><span style="color: var(--shiki-token-keyword)">const</span><span style="color: var(--shiki-color-text)"> </span><span style="color: var(--shiki-token-constant)">topKillers</span><span style="color: var(--shiki-color-text)"> </span><span style="color: var(--shiki-token-keyword)">=</span><span style="color: var(--shiki-color-text)"> </span><span style="color: var(--shiki-token-keyword)">await</span><span style="color: var(--shiki-color-text)"> </span><span style="color: var(--shiki-token-constant)">stats</span><span style="color: var(--shiki-token-function)">.getLeaderboard</span><span style="color: var(--shiki-color-text)">(</span><span style="color: var(--shiki-token-string-expression)">&#39;combat.kills&#39;</span><span style="color: var(--shiki-color-text)">);</span></span>
+<span></span>0:["m6CdOmFbkUcxvfzSbSfo9",[[["",{"children":["examples",{"children":["player-stats",{"children":["__PAGE__",{}]}]}]},"$undefined","$undefined",true],["",{"children":["examples",{"children":["player-stats",{"children":["__PAGE__",{},["$L1",["$","article",null,{"className":"flex h-full flex-col pb-10 pt-16","children":[["$","div",null,{"className":"flex-auto prose dark:prose-invert [html_:where(&>*)]:mx-auto [html_:where(&>*)]:max-w-2xl [html_:where(&>*)]:lg:mx-[calc(50%-min(50%,theme(maxWidth.lg)))] [html_:where(&>*)]:lg:max-w-3xl","children":[["$","h1",null,{"children":"Player Statistics"}],"\n",["$","p",null,{"children":"Track player metrics and provide both in-game and web-based statistics viewing.","className":"lead"}],"\n",["$","$L2",null,{"level":2,"id":"complete-module","children":"Complete Module"}],"\n",["$","$L3",null,{"language":"typescript","code":"$4","children":["$","$L5",null,{"className":"language-typescript","children":"$6"}],"title":"PlayerStatsModule.ts"}],"\n",["$","$L2",null,{"level":2,"id":"stats-tracking","children":"Stats Tracking"}],"\n",["$","p",null,{"children":"The module tracks various statistics:"}],"\n",["$","$L3",null,{"language":"typescript","code":"interface PlayerStats {\n  general: {\n    firstJoin: string;     // First server join\n    lastSeen: string;      // Last online\n    playtime: number;      // Total seconds played\n    joinCount: number;     // Total joins\n  };\n  combat: {\n    kills: number;         // Player kills\n    deaths: number;        // Deaths\n    killstreak: number;    // Current killstreak\n    bestKillstreak: number; // Best killstreak\n  };\n  blocks: {\n    broken: number;        // Blocks broken\n    placed: number;        // Blocks placed\n  };\n}\n","children":["$","$L5",null,{"className":"language-typescript","children":"$7"}],"title":"Stat Categories"}],"\n",["$","$L2",null,{"level":2,"id":"usage","children":"Usage"}],"\n",["$","p",null,{"children":"View stats in-game or via WebSocket:"}],"\n",["$","$L8",null,{"children":[["$","$L3",null,{"language":"typescript","code":"// View your stats\n/stats\n","children":["$","$L5",null,{"className":"language-typescript","children":"<span><span style=\"color: var(--shiki-token-comment)\">// View your stats</span></span>\n<span><span style=\"color: var(--shiki-token-keyword)\">/</span><span style=\"color: var(--shiki-color-text)\">stats</span></span>\n<span></span>"}],"title":"In-Game Commands"}],["$","$L3",null,{"language":"typescript","code":"// Get player stats\nsocket.send({\neventType: 'get_player_stats',\ndata: {\nplayerName: 'Player123'\n}\n});\n\n// Get leaderboard\nsocket.send({\neventType: 'get_leaderboard',\ndata: {\ncategory: 'combat.kills',\nlimit: 10\n}\n});\n","children":["$","$L5",null,{"className":"language-typescript","children":"$9"}],"title":"WebSocket Queries"}]]}],"\n",["$","$L2",null,{"level":2,"id":"event-handling","children":"Event Handling"}],"\n",["$","p",null,{"children":"The module tracks various events:"}],"\n",["$","$L3",null,{"language":"typescript","code":"// Join/Leave tracking\n@Event('player_joined')\n@Event('player_left')\n\n// Combat tracking\n@Event('player_death')\n\n// Block tracking\n@Event('player_break_block_after')\n","children":["$","$L5",null,{"className":"language-typescript","children":"$a"}],"title":"Events"}],"\n",["$","$L2",null,{"level":2,"id":"web-integration","children":"Web Integration"}],"\n",["$","p",null,{"children":"Access stats through WebSocket endpoints:"}],"\n",["$","$L3",null,{"language":"typescript","code":"class StatsClient {\n  constructor(socket: WebSocket) {\n    this.socket = socket;\n  }\n\n  // Get player stats\n  async getPlayerStats(playerName: string) {\n    return this.sendRequest('get_player_stats', {\n      playerName\n    });\n  }\n\n  // Get leaderboard\n  async getLeaderboard(category: string, limit: number = 10) {\n    return this.sendRequest('get_leaderboard', {\n      category,\n      limit\n    });\n  }\n\n  private async sendRequest(eventType: string, data: any) {\n    return new Promise((resolve) => {\n      this.socket.send(JSON.stringify({\n        eventType,\n        data\n      }));\n\n      this.socket.onmessage = (event) => {\n        resolve(JSON.parse(event.data));\n      };\n    });\n  }\n}\n\n// Usage\nconst stats = new StatsClient(socket);\n\n// Get player stats\nconst playerStats = await stats.getPlayerStats('Player123');\n\n// Get kill leaderboard\nconst topKillers = await stats.getLeaderboard('combat.kills');\n","children":["$","$L5",null,{"className":"language-typescript","children":"$b"}],"title":"Web Client Example"}],"\n",["$","$L2",null,{"level":2,"id":"key-features","children":"Key Features"}],"\n",["$","ol",null,{"children":["\n",["$","li",null,{"children":["$","strong",null,{"children":"Comprehensive Tracking"}]}],"\n"]}],"\n",["$","ul",null,{"children":["\n",["$","li",null,{"children":"Playtime"}],"\n",["$","li",null,{"children":"Combat stats"}],"\n",["$","li",null,{"children":"Block interaction"}],"\n",["$","li",null,{"children":"Session tracking"}],"\n"]}],"\n",["$","ol",null,{"start":"2","children":["\n",["$","li",null,{"children":["$","strong",null,{"children":"Real-time Updates"}]}],"\n"]}],"\n",["$","ul",null,{"children":["\n",["$","li",null,{"children":"Event-based tracking"}],"\n",["$","li",null,{"children":"Automatic updates"}],"\n",["$","li",null,{"children":"Session management"}],"\n"]}],"\n",["$","ol",null,{"start":"3","children":["\n",["$","li",null,{"children":["$","strong",null,{"children":"Data Access"}]}],"\n"]}],"\n",["$","ul",null,{"children":["\n",["$","li",null,{"children":"In-game commands"}],"\n",["$","li",null,{"children":"WebSocket API"}],"\n",["$","li",null,{"children":"Leaderboards"}],"\n"]}],"\n",["$","ol",null,{"start":"4","children":["\n",["$","li",null,{"children":["$","strong",null,{"children":"Performance"}]}],"\n"]}],"\n",["$","ul",null,{"children":["\n",["$","li",null,{"children":"Efficient storage"}],"\n",["$","li",null,{"children":"Atomic updates"}],"\n",["$","li",null,{"children":"Event batching"}],"\n"]}],"\n",["$","div",null,{"className":"not-prose","children":["$","$Lc",null,{"className":"inline-flex gap-0.5 justify-center overflow-hidden text-sm font-medium transition text-fuchsia-500 hover:text-fuchsia-600 dark:text-fuchsia-400 dark:hover:text-fuchsia-500","href":"/examples/economy","children":[false,"View Economy System Example",["$","svg",null,{"viewBox":"0 0 20 20","fill":"none","aria-hidden":"true","className":"mt-0.5 h-5 w-5 relative top-px -mr-1","children":["$","path",null,{"stroke":"currentColor","strokeLinecap":"round","strokeLinejoin":"round","d":"m11.5 6.5 3 3.5m0 0-3 3.5m3-3.5h-9"}]}]]}]}]]}],["$","footer",null,{"className":"mx-auto mt-16 w-full max-w-2xl lg:max-w-5xl","children":["$","$Ld",null,{}]}]]}],null]]},["$","$Le",null,{"parallelRouterKey":"children","segmentPath":["children","examples","children","player-stats","children"],"loading":"$undefined","loadingStyles":"$undefined","loadingScripts":"$undefined","hasLoading":false,"error":"$undefined","errorStyles":"$undefined","errorScripts":"$undefined","template":["$","$Lf",null,{}],"templateStyles":"$undefined","templateScripts":"$undefined","notFound":"$undefined","notFoundStyles":"$undefined","styles":null}]]},["$","$Le",null,{"parallelRouterKey":"children","segmentPath":["children","examples","children"],"loading":"$undefined","loadingStyles":"$undefined","loadingScripts":"$undefined","hasLoading":false,"error":"$undefined","errorStyles":"$undefined","errorScripts":"$undefined","template":["$","$Lf",null,{}],"templateStyles":"$undefined","templateScripts":"$undefined","notFound":"$undefined","notFoundStyles":"$undefined","styles":null}]]},[null,"$L10",null]],[[["$","link","0",{"rel":"stylesheet","href":"/_next/static/css/cfc91e73f16c955c.css","precedence":"next","crossOrigin":""}]],"$L11"]]]]
+11:[["$","meta","0",{"name":"viewport","content":"width=device-width, initial-scale=1"}],["$","meta","1",{"charSet":"utf-8"}],["$","title","2",{"children":"Player Statistics Module - Enchanted Server Documentation"}],["$","meta","3",{"name":"description","content":"Track and display comprehensive player statistics in your Minecraft server."}],["$","link","4",{"rel":"icon","href":"/favicon.ico","type":"image/x-icon","sizes":"48x48"}]]
+1:null
+12:I[4840,["250","static/chunks/250-86e445a1e316c17d.js","371","static/chunks/371-9fd983c6f9223e2a.js","536","static/chunks/536-654abe48faf78f66.js","841","static/chunks/841-15946dcd10b62610.js","185","static/chunks/app/layout-4890250a0dcdb7a7.js"],"Providers"]
+13:I[8733,["250","static/chunks/250-86e445a1e316c17d.js","371","static/chunks/371-9fd983c6f9223e2a.js","536","static/chunks/536-654abe48faf78f66.js","841","static/chunks/841-15946dcd10b62610.js","185","static/chunks/app/layout-4890250a0dcdb7a7.js"],"Layout"]
+10:["$","html",null,{"lang":"en","className":"h-full","suppressHydrationWarning":true,"children":["$","body",null,{"className":"flex min-h-full bg-white antialiased dark:bg-zinc-900","children":["$","$L12",null,{"children":["$","div",null,{"className":"w-full","children":["$","$L13",null,{"allSections":{"/":[{"title":"What is Enchanted?","id":"what-is-enchanted"},{"title":"Key Features","id":"key-features"},{"title":"Getting Started","id":"getting-started"}],"/architecture":[{"title":"System Overview","id":"system-overview"},{"title":"Real-Time Communication","id":"real-time-communication"},{"title":"Module System","id":"module-system"},{"title":"State Management","id":"state-management"},{"title":"Server Components","id":"server-components"},{"title":"Fabric Plugin Integration","id":"fabric-plugin-integration"},{"title":"Security Model","id":"security-model"},{"title":"Data Flow","id":"data-flow"},{"title":"Performance Considerations","id":"performance-considerations"},{"title":"Development Workflow","id":"development-workflow"}],"/authentication":[{"title":"Basic Auth Module","id":"basic-auth-module"},{"title":"Client Usage","id":"client-usage"},{"title":"Permission Levels","id":"permission-levels"},{"title":"Token Structure","id":"token-structure"},{"title":"Secure Storage","id":"secure-storage"},{"title":"Security Best Practices","id":"security-best-practices"},{"title":"Enhanced Implementation","id":"enhanced-implementation"},{"title":"What's next?","id":"whats-next"}],"/commands":[{"title":"Command Basics","id":"command-basics"},{"title":"Command Arguments","id":"command-arguments"},{"title":"Subcommands","id":"subcommands"},{"title":"Command Responses","id":"command-responses"},{"title":"Command Permissions","id":"command-permissions"},{"title":"Command Error Handling","id":"command-error-handling"},{"title":"Complete Example","id":"complete-example"}],"/decorators":[{"title":"Module Decorator","id":"module-decorator"},{"title":"Event Decorator","id":"event-decorator"},{"title":"Command Decorator","id":"command-decorator"},{"title":"Description Decorator","id":"description-decorator"},{"title":"Permission Decorator","id":"permission-decorator"},{"title":"Argument Decorator","id":"argument-decorator"},{"title":"Socket Decorator","id":"socket-decorator"},{"title":"Decorator Combinations","id":"decorator-combinations"},{"title":"Complete Example","id":"complete-example"},{"title":"Argument Types","id":"argument-types"},{"title":"Permission Levels","id":"permission-levels"}],"/development":[{"title":"Development Environment","id":"development-environment"},{"title":"Project Structure","id":"project-structure"},{"title":"Module Development","id":"module-development"},{"title":"Development Server","id":"development-server"},{"title":"Testing Modules","id":"testing-modules"},{"title":"Development Tools","id":"development-tools"},{"title":"Debugging","id":"debugging"},{"title":"Development Configuration","id":"development-configuration"},{"title":"Working with Docker","id":"working-with-docker"},{"title":"Module Hot Reloading","id":"module-hot-reloading"},{"title":"Common Development Tasks","id":"common-development-tasks"},{"title":"Best Practices","id":"best-practices"},{"title":"Module Development Lifecycle","id":"module-development-lifecycle"},{"title":"Example Development Module","id":"example-development-module"}],"/errors":[{"title":"Core Concepts","id":"core-concepts"},{"title":"Command Error Handling","id":"command-error-handling"},{"title":"Socket Error Handling","id":"socket-error-handling"},{"title":"Event Error Handling","id":"event-error-handling"},{"title":"Storage Error Handling","id":"storage-error-handling"},{"title":"Error Types","id":"error-types"},{"title":"Best Practices","id":"best-practices"},{"title":"Complete Example","id":"complete-example"}],"/events":[{"title":"Event Basics","id":"event-basics"},{"title":"Player Events","id":"player-events"},{"title":"Block Events","id":"block-events"},{"title":"Combat Events","id":"combat-events"},{"title":"Container Events","id":"container-events"},{"title":"Server Events","id":"server-events"},{"title":"Event Handler Patterns","id":"event-handler-patterns"},{"title":"Complete Example","id":"complete-example"}],"/installation":[{"title":"Prerequisites","id":"prerequisites"},{"title":"Environment Setup","id":"environment-setup"},{"title":"Docker Compose Configuration","id":"docker-compose-configuration"},{"title":"Project Configuration","id":"project-configuration"},{"title":"Project Structure","id":"project-structure"},{"title":"Starting the Server","id":"starting-the-server"},{"title":"Verifying Your Installation","id":"verifying-your-installation"},{"title":"Development Commands","id":"development-commands"},{"title":"Troubleshooting Common Issues","id":"troubleshooting-common-issues"}],"/minecraft-api":[{"title":"Basic Commands","id":"basic-commands"},{"title":"Player Management","id":"player-management"},{"title":"World Manipulation","id":"world-manipulation"},{"title":"Scoreboard Management","id":"scoreboard-management"},{"title":"Chat & Messages","id":"chat-and-messages"},{"title":"Player Data","id":"player-data"},{"title":"Complete Example","id":"complete-example"}],"/modules":[{"title":"Basic Module Structure","id":"basic-module-structure"},{"title":"Module Context","id":"module-context"},{"title":"Event Handling","id":"event-handling"},{"title":"Command Registration","id":"command-registration"},{"title":"Socket Communication","id":"socket-communication"},{"title":"State Management","id":"state-management"},{"title":"Module Communication","id":"module-communication"},{"title":"Module Lifecycle","id":"module-lifecycle"},{"title":"Complex Module Example","id":"complex-module-example"}],"/permissions":[{"title":"Permission Levels","id":"permission-levels"},{"title":"Using Permissions","id":"using-permissions"},{"title":"Permission Context","id":"permission-context"},{"title":"Permission Checks","id":"permission-checks"},{"title":"Command Permissions","id":"command-permissions"},{"title":"Socket Handler Permissions","id":"socket-handler-permissions"},{"title":"Error Handling","id":"error-handling"},{"title":"Best Practices","id":"best-practices"},{"title":"Example Module","id":"example-module"}],"/quickstart":[{"title":"Choose your setup","id":"choose-your-setup"},{"title":"Creating your first module","id":"creating-your-first-module"},{"title":"What's next?","id":"whats-next"}],"/script-context":[{"title":"Context Structure","id":"context-structure"},{"title":"Parameters","id":"parameters"},{"title":"Storage Access","id":"storage-access"},{"title":"Authentication","id":"authentication"},{"title":"Player Communication","id":"player-communication"},{"title":"Player Management","id":"player-management"},{"title":"Logging","id":"logging"},{"title":"Complete Example","id":"complete-example"}],"/storage":[{"title":"Basic Operations","id":"basic-operations"},{"title":"Key Structure","id":"key-structure"},{"title":"Atomic Operations","id":"atomic-operations"},{"title":"Data Models","id":"data-models"},{"title":"Data Management Patterns","id":"data-management-patterns"},{"title":"Complete Example","id":"complete-example"}],"/utilities":[{"title":"Rate Limiting","id":"rate-limiting"},{"title":"Message Formatting","id":"message-formatting"},{"title":"Time Utilities","id":"time-utilities"},{"title":"Data Validation","id":"data-validation"},{"title":"Promise Utilities","id":"promise-utilities"},{"title":"Collection Utilities","id":"collection-utilities"},{"title":"Complete Example","id":"complete-example"}],"/websockets":[{"title":"Socket Basics","id":"socket-basics"},{"title":"Message Structure","id":"message-structure"},{"title":"Authentication","id":"authentication"},{"title":"Real-time Updates","id":"real-time-updates"},{"title":"Client Implementation","id":"client-implementation"},{"title":"Socket State Management","id":"socket-state-management"},{"title":"Complete Example","id":"complete-example"}],"/types":[{"title":"Core Types","id":"core-types"},{"title":"Authentication Types","id":"authentication-types"},{"title":"Decorator Types","id":"decorator-types"},{"title":"API Types","id":"api-types"},{"title":"Event Types","id":"event-types"},{"title":"Storage Types","id":"storage-types"},{"title":"WebSocket Types","id":"web-socket-types"},{"title":"Utility Types","id":"utility-types"},{"title":"Type Usage Example","id":"type-usage-example"}],"/examples/chat":[{"title":"Complete Module","id":"complete-module"},{"title":"WebSocket Integration","id":"web-socket-integration"},{"title":"Usage Examples","id":"usage-examples"},{"title":"Key Features","id":"key-features"}],"/examples/basic-module":[{"title":"Complete Module","id":"complete-module"},{"title":"Module Breakdown","id":"module-breakdown"},{"title":"Usage Examples","id":"usage-examples"},{"title":"Key Concepts Demonstrated","id":"key-concepts-demonstrated"}],"/examples/player-stats":[{"title":"Complete Module","id":"complete-module"},{"title":"Stats Tracking","id":"stats-tracking"},{"title":"Usage","id":"usage"},{"title":"Event Handling","id":"event-handling"},{"title":"Web Integration","id":"web-integration"},{"title":"Key Features","id":"key-features"}],"/examples/economy":[{"title":"Complete Module","id":"complete-module"},{"title":"Key Features","id":"key-features"},{"title":"Usage Examples","id":"usage-examples"},{"title":"Key Concepts","id":"key-concepts"},{"title":"Common Patterns","id":"common-patterns"},{"title":"Extension Ideas","id":"extension-ideas"}]},"children":["$","$Le",null,{"parallelRouterKey":"children","segmentPath":["children"],"loading":"$undefined","loadingStyles":"$undefined","loadingScripts":"$undefined","hasLoading":false,"error":"$undefined","errorStyles":"$undefined","errorScripts":"$undefined","template":["$","$Lf",null,{}],"templateStyles":"$undefined","templateScripts":"$undefined","notFound":[["$","div",null,{"className":"absolute inset-0 -z-10 mx-0 max-w-none overflow-hidden","children":["$","div",null,{"className":"absolute left-1/2 top-0 ml-[-38rem] h-[25rem] w-[81.25rem] dark:[mask-image:linear-gradient(white,transparent)]","children":[["$","div",null,{"className":"absolute inset-0 bg-gradient-to-r from-[#fff] to-[#fff] opacity-40 [mask-image:radial-gradient(farthest-side_at_top,white,transparent)] dark:from-[#000]/30 dark:to-[#000]/30 dark:opacity-100","children":["$","svg",null,{"aria-hidden":"true","className":"absolute inset-x-0 inset-y-[-50%] h-[200%] w-full skew-y-[-18deg] fill-black/40 stroke-black/50 mix-blend-overlay dark:fill-white/2.5 dark:stroke-white/5","children":[["$","defs",null,{"children":["$","pattern",null,{"id":":S1:","width":72,"height":56,"patternUnits":"userSpaceOnUse","x":-12,"y":4,"children":["$","path",null,{"d":"M.5 56V.5H72","fill":"none"}]}]}],["$","rect",null,{"width":"100%","height":"100%","strokeWidth":0,"fill":"url(#:S1:)"}],["$","svg",null,{"x":-12,"y":4,"className":"overflow-visible","children":[["$","rect","4-3",{"strokeWidth":"0","width":73,"height":57,"x":288,"y":168}],["$","rect","2-1",{"strokeWidth":"0","width":73,"height":57,"x":144,"y":56}],["$","rect","7-3",{"strokeWidth":"0","width":73,"height":57,"x":504,"y":168}],["$","rect","10-6",{"strokeWidth":"0","width":73,"height":57,"x":720,"y":336}]]}]]}]}],["$","svg",null,{"viewBox":"0 0 1113 440","aria-hidden":"true","className":"absolute left-1/2 top-0 ml-[-19rem] w-[69.5625rem] fill-white blur-[26px] dark:hidden","children":["$","path",null,{"d":"M.016 439.5s-9.5-300 434-300S882.516 20 882.516 20V0h230.004v439.5H.016Z"}]}]]}]}],["$","div",null,{"className":"mx-auto flex h-full max-w-xl flex-col items-center justify-center py-16 text-center","children":[["$","p",null,{"className":" text-5xl font-semibold text-zinc-900 dark:text-white","children":"404"}],["$","h1",null,{"className":"mt-2 text-2xl font-bold text-zinc-900 dark:text-white","children":"Page not found"}],["$","p",null,{"className":"mt-2 text-base text-zinc-600 dark:text-zinc-400","children":"Sorry, we couldn’t find the page you’re looking for."}],["$","$Lc",null,{"className":"inline-flex gap-0.5 justify-center overflow-hidden text-sm font-medium transition rounded-sm bg-zinc-900 py-1 px-3 text-white hover:bg-zinc-700 dark:bg-fuchsia-400/10 dark:text-fuchsia-400 dark:ring-1 dark:ring-inset dark:ring-fuchsia-400/20 dark:hover:bg-fuchsia-400/10 dark:hover:text-fuchsia-300 dark:hover:ring-fuchsia-300 mt-8","href":"/","children":[false,"Back to docs",["$","svg",null,{"viewBox":"0 0 20 20","fill":"none","aria-hidden":"true","className":"mt-0.5 h-5 w-5 -mr-1","children":["$","path",null,{"stroke":"currentColor","strokeLinecap":"round","strokeLinejoin":"round","d":"m11.5 6.5 3 3.5m0 0-3 3.5m3-3.5h-9"}]}]]}]]}]],"notFoundStyles":[],"styles":null}]}]}]}]}]}]

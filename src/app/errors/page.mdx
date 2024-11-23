@@ -1,70 +1,368 @@
+
 export const metadata = {
-  title: 'Errors',
-  description:
-    'In this guide, we will talk about what happens when something goes wrong while you work with the API.',
+    title: 'Error Handling',
+    description:
+        'Learn how to handle errors effectively in your Enchanted modules.',
 }
 
-# Errors
+# Error Handling
 
-In this guide, we will talk about what happens when something goes wrong while you work with the API. Mistakes happen, and mostly they will be yours, not ours. Let's look at some status codes and error types you might encounter. {{ className: 'lead' }}
+Learn how to handle errors gracefully in your Enchanted modules to provide a better user experience and maintain server stability. {{ className: 'lead' }}
 
-You can tell if your request was successful by checking the status code when receiving an API response. If a response comes back unsuccessful, you can use the error type and error message to figure out what has gone wrong and do some rudimentary debugging (before contacting support).
+## Core Concepts
 
-<Note>
-  Before reaching out to support with an error, please be aware that 99% of all
-  reported errors are, in fact, user errors. Therefore, please carefully check
-  your code before contacting Protocol support.
-</Note>
+Enchanted provides several ways to handle errors in different contexts:
 
----
+```typescript {{ title: 'Error Handling Contexts' }}
+// Command errors - shown to player
+try {
+  await api.executeCommand('command');
+} catch (error) {
+  await api.tellraw(sender, JSON.stringify({
+    text: `Error: ${error.message}`,
+    color: "red"
+  }));
+}
 
-## Status codes
+// Socket errors - returned to client
+try {
+  const result = await operation();
+  return { success: true, data: result };
+} catch (error) {
+  return { success: false, error: error.message };
+}
 
-Here is a list of the different categories of status codes returned by the Protocol API. Use these to understand if a request was successful.
+// Event errors - logged to console
+try {
+  await handleEvent();
+} catch (error) {
+  log(`Error handling event: ${error.message}`);
+}
+```
 
-<Properties>
-  <Property name="2xx">
-    A 2xx status code indicates a successful response.
-  </Property>
-  <Property name="4xx">
-    A 4xx status code indicates a client error — this means it's a _you_
-    problem.
-  </Property>
-  <Property name="5xx">
-    A 5xx status code indicates a server error — you won't be seeing these.
-  </Property>
-</Properties>
+## Command Error Handling
 
----
+Handle command errors with proper user feedback:
 
-## Error types
+<CodeGroup>
 
-<Row>
-  <Col>
+    ```typescript {{ title: 'Basic Command Error' }}
+    @Command(['give'])
+    @Permission('operator')
+    async giveItem({ params, api }: ScriptContext) {
+    const { sender, args } = params;
 
-    Whenever a request is unsuccessful, the Protocol API will return an error response with an error type and message. You can use this information to understand better what has gone wrong and how to fix it. Most of the error messages are pretty helpful and actionable.
+    try {
+    await api.give(args.player, args.item, args.amount);
 
-    Here is a list of the two error types supported by the Protocol API — use these to understand what you have done wrong.
-
-    <Properties>
-      <Property name="api_error">
-        This means that we made an error, which is highly speculative and unlikely.
-      </Property>
-      <Property name="invalid_request">
-        This means that you made an error, which is much more likely.
-      </Property>
-    </Properties>
-
-  </Col>
-  <Col>
-
-    ```bash {{ title: "Error response" }}
-    {
-      "type": "api_error",
-      "message": "No way this is happening!?",
-      "documentation_url": "https://protocol.chat/docs/errors/api_error"
-    }
+    await api.tellraw(sender, JSON.stringify({
+    text: "Items given successfully",
+    color: "green"
+}));
+} catch (error) {
+    await api.tellraw(sender, JSON.stringify({
+    text: `Error: ${error.message}`,
+    color: "red"
+}));
+}
+}
     ```
 
-  </Col>
-</Row>
+    ```typescript {{ title: 'Detailed Error Handling' }}
+    @Command(['transfer'])
+    @Permission('player')
+    async transferMoney({ params, kv, api }: ScriptContext) {
+    const { sender, args } = params;
+
+    try {
+    // Validate input
+    if (!args.amount || args.amount <= 0) {
+    throw new Error('Invalid amount specified');
+}
+
+    if (!args.target) {
+    throw new Error('No target player specified');
+}
+
+    // Check balance
+    const balance = await kv.get(['player', sender, 'balance']);
+    if (!balance.value || balance.value < args.amount) {
+    throw new Error('Insufficient funds');
+}
+
+    // Perform transfer...
+
+} catch (error) {
+    // Different messages for different errors
+    const message = error.message.includes('funds')
+    ? `You don't have enough money for this transfer`
+    : `Failed to transfer: ${error.message}`;
+
+    await api.tellraw(sender, JSON.stringify({
+    text: message,
+    color: "red"
+}));
+
+    // Log error for debugging
+    log(`Transfer error for ${sender}: ${error.message}`);
+}
+}
+    ```
+
+</CodeGroup>
+
+## Socket Error Handling
+
+Handle WebSocket communication errors consistently:
+
+```typescript {{ title: 'Socket Error Pattern' }}
+@Socket('player_data')
+async getPlayerData({ params, kv, auth }: ScriptContext) {
+  try {
+    // Validate authentication
+    if (!await auth.checkPermission('player')) {
+      return {
+        success: false,
+        error: 'Authentication required'
+      };
+    }
+
+    // Validate input
+    if (!params.playerName) {
+      return {
+        success: false,
+        error: 'Player name is required'
+      };
+    }
+
+    const data = await kv.get(['player', params.playerName, 'data']);
+    if (!data.value) {
+      return {
+        success: false,
+        error: 'Player not found'
+      };
+    }
+
+    return {
+      success: true,
+      data: data.value
+    };
+
+  } catch (error) {
+    return {
+      success: false,
+      error: error.message,
+      code: error.code || 'UNKNOWN_ERROR'
+    };
+  }
+}
+```
+
+## Event Error Handling
+
+Handle event processing errors safely:
+
+```typescript {{ title: 'Event Error Pattern' }}
+@Event('player_death')
+async handlePlayerDeath({ params, kv, log }: ScriptContext) {
+  try {
+    const { playerName, x, y, z } = params;
+
+    // Update death statistics
+    await kv.atomic()
+      .check({ key: ['player', playerName, 'stats'] })
+      .mutate(/* mutation */)
+      .commit();
+
+  } catch (error) {
+    // Log error but don't crash
+    log(`Failed to process death event: ${error.message}`);
+    log(`Player: ${params.playerName}`);
+    log(`Stack: ${error.stack}`);
+
+    // Attempt recovery if possible
+    try {
+      await this.handleDeathError(params);
+    } catch (recoveryError) {
+      log(`Recovery failed: ${recoveryError.message}`);
+    }
+  }
+}
+```
+
+## Storage Error Handling
+
+Handle KV storage operations safely:
+
+```typescript {{ title: 'Storage Error Pattern' }}
+async updatePlayerData(kv: any, playerName: string, data: any) {
+  try {
+    // Atomic operation
+    const result = await kv.atomic()
+      .check({ key: ['player', playerName] })
+      .mutate({
+        type: 'set',
+        key: ['player', playerName],
+        value: data
+      })
+      .commit();
+
+    if (!result.ok) {
+      throw new Error('Transaction failed');
+    }
+
+    return true;
+  } catch (error) {
+    // Handle specific storage errors
+    if (error.message.includes('not found')) {
+      throw new Error(`Player ${playerName} not found`);
+    }
+
+    if (error.message.includes('conflict')) {
+      throw new Error('Data was modified by another process');
+    }
+
+    // Log unexpected errors
+    log(`Storage error: ${error.message}`);
+    throw error;
+  }
+}
+```
+
+## Error Types
+
+Common error scenarios to handle:
+
+```typescript {{ title: 'Common Errors' }}
+// Permission errors
+if (!await auth.checkPermission('operator')) {
+  throw new Error('Insufficient permissions');
+}
+
+// Input validation errors
+if (amount <= 0) {
+  throw new Error('Invalid amount');
+}
+
+// Resource not found
+if (!data.value) {
+  throw new Error('Resource not found');
+}
+
+// Rate limiting
+if (exceededLimit) {
+  throw new Error('Rate limit exceeded');
+}
+
+// Concurrent modification
+if (!result.ok) {
+  throw new Error('Transaction conflict');
+}
+```
+
+## Best Practices
+
+Follow these guidelines for robust error handling:
+
+```typescript {{ title: 'Error Handling Guidelines' }}
+1. Always use try-catch blocks
+2. Provide user-friendly error messages
+3. Log errors for debugging
+4. Handle specific error types
+5. Implement recovery mechanisms
+6. Validate input before processing
+7. Use atomic operations for data consistency
+```
+
+## Complete Example
+
+Here's a module demonstrating comprehensive error handling:
+
+```typescript {{ title: 'CompleteErrorHandling.ts' }}
+@Module({
+  name: 'ShopModule',
+  version: '1.0.0'
+})
+export class ShopModule {
+  @Command(['shop', 'buy'])
+  @Permission('player')
+  async buyItem({ params, kv, api, log }: ScriptContext) {
+    const { sender, args } = params;
+
+    try {
+      // Input validation
+      if (!args.item) {
+        throw new Error('Please specify an item to buy');
+      }
+
+      const amount = Number(args.amount) || 1;
+      if (amount <= 0) {
+        throw new Error('Invalid amount specified');
+      }
+
+      // Get shop item
+      const itemResult = await kv.get(['shop', 'items', args.item]);
+      if (!itemResult.value) {
+        throw new Error('Item not available in shop');
+      }
+
+      const item = itemResult.value;
+      const totalCost = item.price * amount;
+
+      // Check balance
+      const balanceResult = await kv.get(['player', sender, 'balance']);
+      const balance = balanceResult.value || 0;
+
+      if (balance < totalCost) {
+        throw new Error(`You need ${totalCost} coins to buy this item`);
+      }
+
+      // Perform transaction
+      const result = await kv.atomic()
+        .check(balanceResult)
+        .mutate({
+          type: 'set',
+          key: ['player', sender, 'balance'],
+          value: balance - totalCost
+        })
+        .commit();
+
+      if (!result.ok) {
+        throw new Error('Transaction failed - please try again');
+      }
+
+      // Give item to player
+      await api.give(sender, args.item, amount);
+
+      // Success message
+      await api.tellraw(sender, JSON.stringify({
+        text: `Bought ${amount}x ${item.name} for ${totalCost} coins`,
+        color: "green"
+      }));
+
+    } catch (error) {
+      // Log error
+      log(`Shop error for ${sender}: ${error.message}`);
+
+      // User feedback
+      await api.tellraw(sender, JSON.stringify({
+        text: `Cannot complete purchase: ${error.message}`,
+        color: "red"
+      }));
+
+      // Attempt recovery if needed
+      try {
+        await this.handleFailedPurchase(sender, args);
+      } catch (recoveryError) {
+        log(`Recovery failed: ${recoveryError.message}`);
+      }
+    }
+  }
+}
+```
+
+<div className="not-prose">
+    <Button href="/modules" variant="text" arrow="right">
+        <>Learn more about Modules</>
+    </Button>
+</div>

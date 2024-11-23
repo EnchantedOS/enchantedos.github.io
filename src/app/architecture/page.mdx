@@ -1,0 +1,205 @@
+export const metadata = {
+  title: 'Architecture',
+  description:
+    'Understand how Enchanted works under the hood, from its modular design to real-time communication systems.',
+}
+
+# Architecture
+
+Discover how Enchanted's components work together to provide a powerful and flexible Minecraft server enhancement framework. {{ className: 'lead' }}
+
+## System Overview
+
+Enchanted consists of three main components that work together to enhance your Minecraft server:
+
+```typescript {{ title: 'Core Components' }}
+┌─────────────────┐      ┌─────────────────┐      ┌─────────────────┐
+│  Minecraft      │      │    Enchanted    │      │     Deno KV     │
+│  Fabric Plugin  │<────>│     Server      │<────>│    Database     │
+└─────────────────┘      └─────────────────┘      └─────────────────┘
+                               ▲
+                               │
+                               ▼
+                        ┌─────────────────┐
+                        │    Modules      │
+                        └─────────────────┘
+```
+
+## Real-Time Communication
+
+<Note>
+    The WebSocket server enables instantaneous communication between your Minecraft server and Enchanted modules, with events flowing in real-time through the system.
+</Note>
+
+The communication flow works as follows:
+
+```typescript {{ title: 'Event Flow' }}
+1. Minecraft Event Occurs
+2. Fabric Plugin Captures Event
+3. WebSocket Message Sent to Enchanted Server
+4. Event Dispatched to Relevant Modules
+5. Modules Process Event and Respond
+6. Response Sent Back to Minecraft Server
+```
+
+## Module System
+
+Modules in Enchanted are TypeScript classes that use decorators to define their behavior:
+
+<CodeGroup>
+
+    ```typescript {{ title: 'Basic Module Structure' }}
+    @Module({
+    name: 'ExampleModule',
+    version: '1.0.0'
+})
+    export class ExampleModule {
+@Event('player_joined')
+    async handleJoin(context: ScriptContext) {
+    // Event handler implementation
+}
+
+    @Command(['example'])
+    async handleCommand(context: ScriptContext) {
+    // Command handler implementation
+}
+
+    @Socket('example_message')
+    async handleSocket(context: ScriptContext) {
+    // Socket message handler
+}
+}
+    ```
+
+    ```typescript {{ title: 'Module Registration' }}
+    // Modules are automatically registered on startup
+    // and can be hot-reloaded during development
+    const moduleManager = new ModuleManager();
+    await moduleManager.loadModules('./modules');
+    await moduleManager.startModules();
+    ```
+
+</CodeGroup>
+
+## State Management
+
+Enchanted uses Deno KV for persistent storage across the system:
+
+```typescript {{ title: 'State Management' }}
+┌─────────────────┐      ┌─────────────────┐
+│    Module A     │      │    Module B     │
+└───────┬─────────┘      └────────┬────────┘
+        │                         │
+        ▼                         ▼
+┌─────────────────────────────────────────┐
+│              Deno KV Store              │
+└─────────────────────────────────────────┘
+```
+
+## Server Components
+
+### WebSocket Server
+- Handles real-time communication with Minecraft server
+- Manages module events and responses
+- Provides authentication and security
+
+### Module Manager
+- Loads and initializes modules
+- Manages module lifecycle
+- Handles hot-reloading during development
+
+### Event Dispatcher
+- Routes events to appropriate modules
+- Manages event priorities and order
+- Handles error cases and fallbacks
+
+## Fabric Plugin Integration
+
+The Fabric plugin provides seamless integration with Minecraft:
+
+<CodeGroup>
+
+    ```java {{ title: 'Event Capture' }}
+    // Plugin captures Minecraft events
+    @Inject(method = "onPlayerJoin", at = @At("HEAD"))
+    private void handlePlayerJoin(PlayerEntity player) {
+    // Send event to WebSocket server
+    websocket.send({
+        type: "player_joined",
+        data: {
+            playerId: player.getUuid(),
+            playerName: player.getName()
+        }
+    });
+}
+    ```
+
+    ```typescript {{ title: 'Event Processing' }}
+    // Enchanted server receives and processes events
+    server.on('player_joined', async (data) => {
+    // Dispatch to relevant modules
+    await moduleManager.dispatch('player_joined', data);
+});
+    ```
+
+</CodeGroup>
+
+## Security Model
+
+Enchanted implements multiple layers of security:
+
+```typescript {{ title: 'Security Layers' }}
+1. JWT Authentication for API/WebSocket
+2. Permission-based access control
+3. Module isolation
+4. Rate limiting
+5. Input validation
+```
+
+## Data Flow
+
+The typical data flow in an Enchanted system:
+
+```typescript {{ title: 'Data Flow' }}
+┌──────────────┐     ┌──────────────┐     ┌──────────────┐
+│   Minecraft  │     │  Enchanted   │     │  Deno KV     │
+│    Event     │────>│   Module     │────>│   Storage    │
+└──────────────┘     └──────────────┘     └──────────────┘
+                           │
+                           ▼
+                    ┌──────────────┐
+                    │   Command    │
+                    │   Response   │
+                    └──────────────┘
+```
+
+## Performance Considerations
+
+<Note>
+    Enchanted is designed to handle high-throughput scenarios while maintaining low latency for real-time operations.
+</Note>
+
+Key performance features:
+- Asynchronous event processing
+- Connection pooling
+- Request batching
+- Efficient state management
+- Resource limits per container
+
+## Development Workflow
+
+The typical development workflow in Enchanted:
+
+```typescript {{ title: 'Development Flow' }}
+1. Create/modify module file
+2. Hot-reload automatically triggers
+3. New module version loaded
+4. Old instance gracefully terminated
+5. State preserved in Deno KV
+```
+
+<div className="not-prose">
+    <Button href="/modules" variant="text" arrow="right">
+        <>Learn more about Modules</>
+    </Button>
+</div>

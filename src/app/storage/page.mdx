@@ -1,0 +1,436 @@
+
+export const metadata = {
+    title: 'Storage',
+    description:
+        'Learn how to persist and manage data in your Enchanted modules using Deno KV.',
+}
+
+# Storage
+
+Enchanted uses Deno KV for persistent data storage, providing a powerful key-value store with atomic operations. {{ className: 'lead' }}
+
+## Basic Operations
+
+Basic key-value operations in your modules:
+
+<CodeGroup>
+
+    ```typescript {{ title: 'Reading Data' }}
+    @Command(['profile'])
+    async viewProfile({ params, kv }: ScriptContext) {
+    // Get value from storage
+    const profile = await kv.get(['player', params.sender, 'profile']);
+
+    // Handle non-existent data
+    if (!profile.value) {
+    return // Handle missing data
+}
+
+    // Use the data
+    const playerData = profile.value;
+}
+    ```
+
+    ```typescript {{ title: 'Writing Data' }}
+    @Event('player_joined')
+    async saveData({ params, kv }: ScriptContext) {
+    // Store value
+    await kv.set(['player', params.playerName, 'profile'], {
+        lastJoin: Date.now(),
+        visits: 1
+    });
+}
+    ```
+
+    ```typescript {{ title: 'Deleting Data' }}
+    @Command(['reset'])
+    async resetData({ params, kv }: ScriptContext) {
+    // Delete value
+    await kv.delete(['player', params.sender, 'profile']);
+}
+    ```
+
+</CodeGroup>
+
+## Key Structure
+
+Use descriptive, hierarchical keys for better organization:
+
+```typescript {{ title: 'Key Structure Patterns' }}
+// Player data
+['player', playerName, 'profile']
+['player', playerName, 'stats']
+['player', playerName, 'inventory']
+
+// Server data
+['server', 'config']
+['server', 'stats']
+
+// Module data
+['module', moduleName, 'settings']
+['module', moduleName, 'data']
+
+// Temporary data
+['temp', 'cache', cacheKey]
+```
+
+<Note>
+    Use array-based keys for better type safety and to avoid encoding issues. Keys are automatically encoded and decoded by Deno KV.
+</Note>
+
+## Atomic Operations
+
+Perform atomic operations to ensure data consistency:
+
+```typescript {{ title: 'Atomic Operations' }}
+@Command(['transfer'])
+async transferMoney({ params, kv }: ScriptContext) {
+  const { sender, args } = params;
+  const amount = args.amount;
+
+  // Get current balances
+  const senderBalance = await kv.get(['player', sender, 'balance']);
+  const targetBalance = await kv.get(['player', args.target, 'balance']);
+
+  // Perform atomic transaction
+  const result = await kv.atomic()
+    .check(senderBalance)   // Verify sender balance hasn't changed
+    .check(targetBalance)   // Verify target balance hasn't changed
+    .mutate({
+      type: 'set',
+      key: ['player', sender, 'balance'],
+      value: (senderBalance.value || 0) - amount
+    })
+    .mutate({
+      type: 'set',
+      key: ['player', args.target, 'balance'],
+      value: (targetBalance.value || 0) + amount
+    })
+    .commit();
+
+  if (!result.ok) {
+    throw new Error('Transaction failed');
+  }
+}
+```
+
+## Data Models
+
+Define clear interfaces for your stored data:
+
+```typescript {{ title: 'Data Models' }}
+interface PlayerProfile {
+  id: string;
+  name: string;
+  firstJoin: string;
+  lastSeen: string;
+  playtime: number;
+  settings: {
+    notifications: boolean;
+    language: string;
+  };
+}
+
+interface PlayerStats {
+  kills: number;
+  deaths: number;
+  wins: number;
+  losses: number;
+  ratio: number;
+}
+
+// Storage helper methods
+class PlayerData {
+  private async getProfile(
+    kv: Deno.Kv,
+    playerName: string
+  ): Promise<PlayerProfile> {
+    const profile = await kv.get(['player', playerName, 'profile']);
+    return profile.value || this.createDefaultProfile(playerName);
+  }
+
+  private async getStats(
+    kv: Deno.Kv,
+    playerName: string
+  ): Promise<PlayerStats> {
+    const stats = await kv.get(['player', playerName, 'stats']);
+    return stats.value || this.createDefaultStats();
+  }
+
+  private createDefaultProfile(playerName: string): PlayerProfile {
+    return {
+      id: crypto.randomUUID(),
+      name: playerName,
+      firstJoin: new Date().toISOString(),
+      lastSeen: new Date().toISOString(),
+      playtime: 0,
+      settings: {
+        notifications: true,
+        language: 'en'
+      }
+    };
+  }
+
+  private createDefaultStats(): PlayerStats {
+    return {
+      kills: 0,
+      deaths: 0,
+      wins: 0,
+      losses: 0,
+      ratio: 0
+    };
+  }
+}
+```
+
+## Data Management Patterns
+
+Common patterns for managing stored data:
+
+<CodeGroup>
+
+    ```typescript {{ title: 'Initialization' }}
+    async initializeData({ params, kv }: ScriptContext) {
+    const { playerName } = params;
+
+    // Check if data exists
+    const existing = await kv.get(['player', playerName]);
+
+    // Only initialize if not exists
+    if (!existing.value) {
+    await kv.set(['player', playerName], {
+    created: Date.now(),
+    // ... initial data
+});
+}
+}
+    ```
+
+    ```typescript {{ title: 'Updates' }}
+    async updateData({ params, kv }: ScriptContext) {
+    const { playerName, updates } = params;
+
+    // Get current data
+    const current = await kv.get(['player', playerName]);
+
+    // Merge updates
+    await kv.set(['player', playerName], {
+    ...current.value,
+    ...updates,
+    lastModified: Date.now()
+});
+}
+    ```
+
+    ```typescript {{ title: 'Migrations' }}
+    async migrateData({ kv }: ScriptContext) {
+    // Get all players
+    const players = await kv.get(['players']);
+
+    // Update each player's data structure
+    for (const playerName of players.value || []) {
+    const oldData = await kv.get(['player', playerName]);
+
+    // Migrate to new structure
+    await kv.set(['player', playerName], {
+    ...oldData.value,
+    newField: defaultValue,
+    version: 2
+});
+}
+}
+    ```
+
+</CodeGroup>
+
+## Complete Example
+
+Here's a comprehensive example showing various storage patterns:
+
+```typescript {{ title: 'StorageModule.ts' }}
+interface InventoryItem {
+  id: string;
+  count: number;
+  metadata?: Record<string, unknown>;
+}
+
+interface PlayerInventory {
+  items: InventoryItem[];
+  lastUpdated: string;
+  version: number;
+}
+
+@Module({
+  name: 'InventoryManager',
+  version: '1.0.0'
+})
+export class InventoryManager {
+  // Get player inventory
+  private async getInventory(
+    kv: Deno.Kv,
+    playerName: string
+  ): Promise<PlayerInventory> {
+    const inventory = await kv.get(['player', playerName, 'inventory']);
+    return inventory.value || {
+      items: [],
+      lastUpdated: new Date().toISOString(),
+      version: 1
+    };
+  }
+
+  // Add item to inventory
+  @Command(['inventory', 'add'])
+  @Permission('operator')
+  async addItem({ params, kv, api }: ScriptContext) {
+    const { sender, args } = params;
+
+    try {
+      // Validate input
+      if (!args.item || args.count <= 0) {
+        throw new Error('Invalid item or count');
+      }
+
+      // Get current inventory
+      const inventory = await this.getInventory(kv, args.player);
+
+      // Create new item
+      const newItem: InventoryItem = {
+        id: args.item,
+        count: args.count,
+        metadata: args.metadata
+      };
+
+      // Update atomically
+      const result = await kv.atomic()
+        .check({ key: ['player', args.player, 'inventory'] })
+        .mutate({
+          type: 'set',
+          key: ['player', args.player, 'inventory'],
+          value: {
+            ...inventory,
+            items: [...inventory.items, newItem],
+            lastUpdated: new Date().toISOString()
+          }
+        })
+        .commit();
+
+      if (!result.ok) {
+        throw new Error('Failed to update inventory');
+      }
+
+      // Notify success
+      await api.tellraw(sender, JSON.stringify({
+        text: `Added ${args.count}x ${args.item} to ${args.player}'s inventory`,
+        color: "green"
+      }));
+
+    } catch (error) {
+      await api.tellraw(sender, JSON.stringify({
+        text: `Error: ${error.message}`,
+        color: "red"
+      }));
+    }
+  }
+
+  // View inventory
+  @Command(['inventory', 'view'])
+  @Permission('player')
+  async viewInventory({ params, kv, api }: ScriptContext) {
+    const { sender } = params;
+
+    try {
+      const inventory = await this.getInventory(kv, sender);
+
+      if (inventory.items.length === 0) {
+        await api.tellraw(sender, JSON.stringify({
+          text: "Your inventory is empty",
+          color: "yellow"
+        }));
+        return;
+      }
+
+      // Display inventory
+      await api.tellraw(sender, JSON.stringify([
+        { text: "=== Inventory ===\n", color: "gold", bold: true },
+        ...inventory.items.map(item => ({
+          text: `${item.count}x ${item.id}\n`,
+          color: "white"
+        })),
+        { text: `Last updated: ${inventory.lastUpdated}`, color: "gray", italic: true }
+      ]));
+
+    } catch (error) {
+      await api.tellraw(sender, JSON.stringify({
+        text: `Error: ${error.message}`,
+        color: "red"
+      }));
+    }
+  }
+
+  // Clear inventory
+  @Command(['inventory', 'clear'])
+  @Permission('operator')
+  async clearInventory({ params, kv, api }: ScriptContext) {
+    const { sender, args } = params;
+
+    try {
+      // Atomic clear operation
+      const result = await kv.atomic()
+        .check({ key: ['player', args.player, 'inventory'] })
+        .mutate({
+          type: 'set',
+          key: ['player', args.player, 'inventory'],
+          value: {
+            items: [],
+            lastUpdated: new Date().toISOString(),
+            version: 1
+          }
+        })
+        .commit();
+
+      if (!result.ok) {
+        throw new Error('Failed to clear inventory');
+      }
+
+      await api.tellraw(sender, JSON.stringify({
+        text: `Cleared ${args.player}'s inventory`,
+        color: "green"
+      }));
+
+    } catch (error) {
+      await api.tellraw(sender, JSON.stringify({
+        text: `Error: ${error.message}`,
+        color: "red"
+      }));
+    }
+  }
+
+  // Socket handler for real-time inventory updates
+  @Socket('inventory_update')
+  async handleInventoryUpdate({ params, kv, auth }: ScriptContext) {
+    try {
+      if (!await auth.checkPermission('player')) {
+        return { success: false, error: 'Unauthorized' };
+      }
+
+      const inventory = await this.getInventory(kv, params.playerName);
+
+      return {
+        success: true,
+        data: inventory
+      };
+    } catch (error) {
+      return {
+        success: false,
+        error: error.message
+      };
+    }
+  }
+}
+```
+
+<div className="not-prose">
+    <Button href="/modules" variant="text" arrow="right">
+        <>Learn about Modules</>
+    </Button>
+</div>

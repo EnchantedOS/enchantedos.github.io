@@ -1,14 +1,14 @@
 @layer base {
   :root {
     --shiki-color-text: theme('colors.white');
-    --shiki-token-constant: theme('colors.violet.300');
-    --shiki-token-string: theme('colors.violet.300');
-    --shiki-token-comment: theme('colors.zinc.500');
-    --shiki-token-keyword: theme('colors.indigo.300');
-    --shiki-token-parameter: theme('colors.fuchsia.300');
-    --shiki-token-function: theme('colors.purple.300');
-    --shiki-token-string-expression: theme('colors.violet.300');
-    --shiki-token-punctuation: theme('colors.zinc.200');
+    --shiki-token-constant: theme('colors.blue.400');
+    --shiki-token-string: theme('colors.violet.400');
+    --shiki-token-comment: theme('colors.zinc.200');
+    --shiki-token-keyword: theme('colors.indigo.400');
+    --shiki-token-parameter: theme('colors.fuchsia.400');
+    --shiki-token-function: theme('colors.emerald.400');
+    --shiki-token-string-expression: theme('colors.purple.400');
+    --shiki-token-punctuation: theme('colors.zinc.100');
   }
 
   [inert] ::-webkit-scrollbar {

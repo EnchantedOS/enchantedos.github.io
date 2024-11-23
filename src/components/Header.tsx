@@ -89,7 +89,7 @@ export const Header = forwardRef<
           <ThemeToggle />
         </div>
         <div className="hidden min-[416px]:contents">
-          <Button href="#">Boot OS</Button>
+          <Button target="_blank" href="https://cou.ai">Boot OS</Button>
         </div>
       </div>
     </motion.div>

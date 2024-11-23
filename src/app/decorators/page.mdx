@@ -1,0 +1,363 @@
+
+export const metadata = {
+    title: 'Decorators',
+    description:
+        'Learn about the TypeScript decorators used to build Enchanted modules.',
+}
+
+# Decorators
+
+Decorators are the building blocks of Enchanted modules, used to define module properties, handle events, create commands, and manage WebSocket communications. {{ className: 'lead' }}
+
+## Module Decorator
+
+The `@Module` decorator defines a module's metadata:
+
+```typescript {{ title: '@Module' }}
+@Module({
+  name: 'ExampleModule',    // Module name
+  version: '1.0.0',        // Semantic version
+})
+export class ExampleModule {
+  // Module implementation
+}
+```
+
+<Note>
+    The module name must be unique across your server, and the version should follow semantic versioning (MAJOR.MINOR.PATCH).
+</Note>
+
+## Event Decorator
+
+The `@Event` decorator registers event handlers:
+
+<CodeGroup>
+
+    ```typescript {{ title: 'Basic Event' }}
+    @Event('player_joined')
+    async handleJoin(context: ScriptContext) {
+    // Handle player join
+}
+    ```
+
+    ```typescript {{ title: 'Multiple Events' }}
+    @Event('player_death')
+    @Event('player_respawned')
+    async handlePlayerState(context: ScriptContext) {
+    // Handle both death and respawn
+}
+    ```
+
+    ```typescript {{ title: 'Server Events' }}
+    @Event('server_started')
+    async onServerStart(context: ScriptContext) {
+    // Server startup handling
+}
+    ```
+
+</CodeGroup>
+
+## Command Decorator
+
+The `@Command` decorator creates Minecraft commands:
+
+```typescript {{ title: '@Command' }}
+@Command(['shop'])              // Base command
+@Command(['shop', 'buy'])       // Subcommand
+@Command(['shop', 'sell'])      // Another subcommand
+async handleCommand(context: ScriptContext) {
+  // Command implementation
+}
+```
+
+## Description Decorator
+
+The `@Description` decorator adds help text to commands:
+
+```typescript {{ title: '@Description' }}
+@Command(['balance'])
+@Description('Check your coin balance')
+async balanceCommand(context: ScriptContext) {
+  // Command implementation
+}
+```
+
+## Permission Decorator
+
+The `@Permission` decorator controls access to commands:
+
+```typescript {{ title: '@Permission' }}
+// Regular player command
+@Command(['balance'])
+@Permission('player')
+async playerCommand(context: ScriptContext) {
+  // Available to all players
+}
+
+// Admin command
+@Command(['give'])
+@Permission('operator')
+async adminCommand(context: ScriptContext) {
+  // Only available to operators
+}
+
+// Public command
+@Command(['help'])
+@Permission('guest')
+async publicCommand(context: ScriptContext) {
+  // Available to everyone
+}
+```
+
+## Argument Decorator
+
+The `@Argument` decorator defines command arguments:
+
+<CodeGroup>
+
+    ```typescript {{ title: 'Basic Arguments' }}
+    @Command(['give'])
+    @Argument([
+    {
+        name: 'player',
+        type: 'string',
+        description: 'Target player'
+    },
+    {
+        name: 'item',
+        type: 'string',
+        description: 'Item to give'
+    },
+    {
+        name: 'amount',
+        type: 'integer',
+        description: 'Amount',
+        optional: true,
+        default: 1
+    }
+    ])
+    async giveCommand(context: ScriptContext) {
+    const { args } = context.params;
+    // Access args.player, args.item, args.amount
+}
+    ```
+
+    ```typescript {{ title: 'Enum Arguments' }}
+    @Command(['rank'])
+    @Argument([
+    {
+        name: 'player',
+        type: 'string',
+        description: 'Player name'
+    },
+    {
+        name: 'rank',
+        type: 'enum',
+        values: ['vip', 'mvp', 'admin'],
+        description: 'Rank to assign'
+    }
+    ])
+    async rankCommand(context: ScriptContext) {
+    // Command implementation
+}
+    ```
+
+</CodeGroup>
+
+## Socket Decorator
+
+The `@Socket` decorator handles WebSocket messages:
+
+```typescript {{ title: '@Socket' }}
+@Socket('get_player_data')
+async handleSocket(context: ScriptContext) {
+  try {
+    // Verify authentication
+    if (!await context.auth.checkPermission('player')) {
+      return {
+        success: false,
+        error: 'Unauthorized'
+      };
+    }
+
+    // Return data
+    return {
+      success: true,
+      data: {
+        // Response data
+      }
+    };
+  } catch (error) {
+    return {
+      success: false,
+      error: error.message
+    };
+  }
+}
+```
+
+## Decorator Combinations
+
+Common decorator combinations:
+
+```typescript {{ title: 'Decorator Patterns' }}
+@Module({
+  name: 'ComplexModule',
+  version: '1.0.0'
+})
+export class ComplexModule {
+  // Command with arguments and permission
+  @Command(['shop', 'buy'])
+  @Description('Purchase items from the shop')
+  @Permission('player')
+  @Argument([
+    { name: 'item', type: 'string', description: 'Item to buy' },
+    { name: 'amount', type: 'integer', description: 'Amount', optional: true }
+  ])
+  async buyCommand(context: ScriptContext) {
+    // Implementation
+  }
+
+  // Multiple event handler
+  @Event('player_death')
+  @Event('player_respawned')
+  async handlePlayerState(context: ScriptContext) {
+    // Implementation
+  }
+
+  // Socket with specific message type
+  @Socket('player_stats')
+  async handleStats(context: ScriptContext) {
+    // Implementation
+  }
+}
+```
+
+## Complete Example
+
+Here's a comprehensive example showing various decorator usages:
+
+```typescript {{ title: 'ShopModule.ts' }}
+interface ShopItem {
+  id: string;
+  name: string;
+  price: number;
+  description: string;
+}
+
+@Module({
+  name: 'ShopModule',
+  version: '1.0.0'
+})
+export class ShopModule {
+  // View shop items
+  @Command(['shop'])
+  @Description('View available shop items')
+  @Permission('player')
+  async viewShop({ params, api }: ScriptContext) {
+    const { sender } = params;
+    await api.tellraw(sender, JSON.stringify({
+      text: "=== Shop Items ===",
+      color: "gold"
+    }));
+  }
+
+  // Buy items
+  @Command(['shop', 'buy'])
+  @Description('Purchase items from the shop')
+  @Permission('player')
+  @Argument([
+    {
+      name: 'item',
+      type: 'string',
+      description: 'Item to purchase'
+    },
+    {
+      name: 'amount',
+      type: 'integer',
+      description: 'Amount to buy',
+      optional: true,
+      default: 1
+    }
+  ])
+  async buyItem({ params, api, kv }: ScriptContext) {
+    // Implementation
+  }
+
+  // Admin commands
+  @Command(['shop', 'add'])
+  @Description('Add an item to the shop')
+  @Permission('operator')
+  @Argument([
+    { name: 'item', type: 'string', description: 'Item ID' },
+    { name: 'price', type: 'integer', description: 'Item price' },
+    { name: 'name', type: 'string', description: 'Display name' }
+  ])
+  async addItem({ params, kv }: ScriptContext) {
+    // Implementation
+  }
+
+  // Event handlers
+  @Event('player_joined')
+  async sendWelcome({ params, api }: ScriptContext) {
+    await api.tellraw(params.playerName, JSON.stringify({
+      text: "Welcome to the shop!",
+      color: "gold"
+    }));
+  }
+
+  // Socket handlers
+  @Socket('shop_data')
+  async getShopData({ kv, auth }: ScriptContext) {
+    try {
+      if (!await auth.checkPermission('player')) {
+        return {
+          success: false,
+          error: 'Unauthorized'
+        };
+      }
+
+      const items = await kv.get(['shop', 'items']);
+      return {
+        success: true,
+        data: items.value || []
+      };
+    } catch (error) {
+      return {
+        success: false,
+        error: error.message
+      };
+    }
+  }
+}
+```
+
+## Argument Types
+
+Available argument types for the `@Argument` decorator:
+
+```typescript {{ title: 'Argument Types' }}
+type ArgumentType =
+  | 'string'    // Text input
+  | 'integer'   // Whole numbers
+  | 'number'    // Decimal numbers
+  | 'boolean'   // True/false
+  | 'enum'      // Predefined values
+```
+
+## Permission Levels
+
+Available permission levels for the `@Permission` decorator:
+
+```typescript {{ title: 'Permission Levels' }}
+type PermissionLevel =
+  | 'guest'     // No authentication required
+  | 'player'    // Authenticated players
+  | 'operator'  // Server operators
+```
+
+<div className="not-prose">
+    <Button href="/modules" variant="text" arrow="right">
+        <>Learn about Modules</>
+    </Button>
+</div>

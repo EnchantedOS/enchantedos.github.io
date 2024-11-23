@@ -1,0 +1,389 @@
+
+export const metadata = {
+    title: 'WebSockets',
+    description:
+        'Learn how to handle real-time communication between your Minecraft server and clients using WebSockets.',
+}
+
+# WebSockets
+
+WebSockets enable real-time bidirectional communication between your Minecraft server and connected clients. {{ className: 'lead' }}
+
+## Socket Basics
+
+Handle WebSocket messages using the `@Socket` decorator:
+
+```typescript {{ title: 'Basic Socket Handler' }}
+@Module({
+  name: 'ExampleModule',
+  version: '1.0.0'
+})
+export class ExampleModule {
+  @Socket('get_stats')
+  async handleStatsRequest({ params, kv, auth }: ScriptContext) {
+    try {
+      // Verify authentication
+      if (!await auth.checkPermission('player')) {
+        return {
+          success: false,
+          error: 'Unauthorized'
+        };
+      }
+
+      const stats = await kv.get(['stats', params.playerName]);
+      return {
+        success: true,
+        data: stats.value
+      };
+    } catch (error) {
+      return {
+        success: false,
+        error: error.message
+      };
+    }
+  }
+}
+```
+
+## Message Structure
+
+Standard message format for WebSocket communication:
+
+<CodeGroup>
+
+    ```typescript {{ title: 'Client Request' }}
+    socket.send(JSON.stringify({
+    eventType: 'get_stats',
+    data: {
+    playerName: 'player123'
+}
+}));
+    ```
+
+    ```typescript {{ title: 'Server Response' }}
+    {
+        success: true,  // Operation status
+        data: {        // Response data
+        // Response payload
+    },
+        error?: string // Error message if failed
+    }
+    ```
+
+    ```typescript {{ title: 'Error Response' }}
+    {
+        success: false,
+        error: 'Error message'
+    }
+    ```
+
+</CodeGroup>
+
+## Authentication
+
+Handle authentication in WebSocket connections:
+
+```typescript {{ title: 'Authentication Flow' }}
+@Socket('auth')
+async handleAuth({ params, auth }: ScriptContext) {
+  try {
+    const { token } = params;
+
+    // Verify JWT token
+    const payload = await auth.verifyToken(token);
+    if (!payload) {
+      throw new Error('Invalid token');
+    }
+
+    return {
+      success: true,
+      data: {
+        username: payload.name,
+        role: payload.role
+      }
+    };
+  } catch (error) {
+    return {
+      success: false,
+      error: 'Authentication failed'
+    };
+  }
+}
+```
+
+## Real-time Updates
+
+Send real-time updates to connected clients:
+
+```typescript {{ title: 'Real-time Updates' }}
+@Module({
+  name: 'LiveUpdates',
+  version: '1.0.0'
+})
+export class LiveUpdates {
+  @Event('player_death')
+  async broadcastDeath({ params, broadcastPlayers }: ScriptContext) {
+    broadcastPlayers({
+      type: 'player_died',
+      data: {
+        player: params.playerName,
+        location: {
+          x: params.x,
+          y: params.y,
+          z: params.z
+        }
+      }
+    });
+  }
+
+  @Event('player_joined')
+  async notifyJoin({ params, sendToPlayer }: ScriptContext) {
+    sendToPlayer(params.playerId, {
+      type: 'welcome',
+      data: {
+        message: 'Welcome to the server!'
+      }
+    });
+  }
+}
+```
+
+## Client Implementation
+
+Example client-side WebSocket implementation:
+
+```typescript {{ title: 'Client Connection' }}
+class EnchantedClient {
+  private socket: WebSocket;
+  private messageHandlers: Map<string, Function>;
+
+  constructor(url: string) {
+    this.socket = new WebSocket(url);
+    this.messageHandlers = new Map();
+
+    this.socket.onmessage = (event) => {
+      const message = JSON.parse(event.data);
+      const handler = this.messageHandlers.get(message.type);
+      if (handler) {
+        handler(message.data);
+      }
+    };
+  }
+
+  public on(type: string, handler: Function) {
+    this.messageHandlers.set(type, handler);
+  }
+
+  public send(eventType: string, data: any) {
+    this.socket.send(JSON.stringify({
+      eventType,
+      data
+    }));
+  }
+}
+
+// Usage example
+const client = new EnchantedClient('ws://localhost:8081');
+
+// Handle authentication
+client.send('auth', {
+  token: 'your-jwt-token'
+});
+
+// Listen for updates
+client.on('player_died', (data) => {
+  console.log(`${data.player} died at ${data.location.x},${data.location.y},${data.location.z}`);
+});
+```
+
+## Socket State Management
+
+Handle socket state and reconnection:
+
+```typescript {{ title: 'Socket State Management' }}
+@Module({
+  name: 'SocketManager',
+  version: '1.0.0'
+})
+export class SocketManager {
+  @Socket('connection_status')
+  async handleStatus({ params, kv, auth }: ScriptContext) {
+    const { playerName } = params;
+
+    try {
+      // Update connection status
+      await kv.set(['player', playerName, 'socket_status'], {
+        connected: true,
+        lastSeen: new Date().toISOString()
+      });
+
+      return {
+        success: true,
+        data: {
+          status: 'connected'
+        }
+      };
+    } catch (error) {
+      return {
+        success: false,
+        error: error.message
+      };
+    }
+  }
+}
+```
+
+## Complete Example
+
+Here's a comprehensive WebSocket module example:
+
+```typescript {{ title: 'LiveStatsModule.ts' }}
+interface PlayerStats {
+  health: number;
+  food: number;
+  position: {
+    x: number;
+    y: number;
+    z: number;
+    dimension: string;
+  };
+  inventory: Array<{
+    slot: number;
+    item: string;
+    count: number;
+  }>;
+}
+
+@Module({
+  name: 'LiveStats',
+  version: '1.0.0'
+})
+export class LiveStats {
+  // Get current player stats
+  @Socket('get_live_stats')
+  async getLiveStats({ params, kv, auth }: ScriptContext) {
+    try {
+      // Verify authentication
+      if (!await auth.checkPermission('player')) {
+        return {
+          success: false,
+          error: 'Unauthorized'
+        };
+      }
+
+      const { playerName } = params;
+      const stats = await kv.get(['live_stats', playerName]);
+
+      return {
+        success: true,
+        data: stats.value || {
+          health: 20,
+          food: 20,
+          position: { x: 0, y: 0, z: 0, dimension: 'overworld' },
+          inventory: []
+        }
+      };
+    } catch (error) {
+      return {
+        success: false,
+        error: error.message
+      };
+    }
+  }
+
+  // Update stats on events
+  @Event('player_death')
+  @Event('player_respawned')
+  async updateHealth({ params, kv, broadcastPlayers }: ScriptContext) {
+    const { playerName, x, y, z, dimension } = params;
+
+    try {
+      const stats = await kv.get(['live_stats', playerName]);
+      const currentStats = stats.value || {};
+
+      const updatedStats: PlayerStats = {
+        ...currentStats,
+        health: params.event === 'player_death' ? 0 : 20,
+        position: { x, y, z, dimension }
+      };
+
+      await kv.set(['live_stats', playerName], updatedStats);
+
+      // Broadcast update
+      broadcastPlayers({
+        type: 'stats_update',
+        data: {
+          player: playerName,
+          stats: updatedStats
+        }
+      });
+    } catch (error) {
+      console.error(`Failed to update stats: ${error.message}`);
+    }
+  }
+
+  // Subscribe to live updates
+  @Socket('subscribe_stats')
+  async subscribeToStats({ params, auth, socket }: ScriptContext) {
+    try {
+      if (!await auth.checkPermission('player')) {
+        return {
+          success: false,
+          error: 'Unauthorized'
+        };
+      }
+
+      const { playerName } = params;
+
+      // Store subscription
+      await kv.set(
+        ['stats_subscriptions', socket.id],
+        { playerName, timestamp: Date.now() }
+      );
+
+      return {
+        success: true,
+        data: {
+          message: 'Subscribed to live stats updates'
+        }
+      };
+    } catch (error) {
+      return {
+        success: false,
+        error: error.message
+      };
+    }
+  }
+
+  // Periodic stats update
+  @Event('server_tick')
+  async broadcastUpdates({ kv, broadcastPlayers }: ScriptContext) {
+    try {
+      // Get all online players
+      const players = await kv.get(['online_players']);
+      if (!players.value) return;
+
+      for (const playerName of players.value) {
+        const stats = await kv.get(['live_stats', playerName]);
+        if (stats.value) {
+          broadcastPlayers({
+            type: 'stats_update',
+            data: {
+              player: playerName,
+              stats: stats.value
+            }
+          });
+        }
+      }
+    } catch (error) {
+      console.error(`Failed to broadcast updates: ${error.message}`);
+    }
+  }
+}
+```
+
+<div className="not-prose">
+    <Button href="/modules" variant="text" arrow="right">
+        <>Learn about Modules</>
+    </Button>
+</div>

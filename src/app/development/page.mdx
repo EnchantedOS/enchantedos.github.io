@@ -1,0 +1,358 @@
+
+export const metadata = {
+    title: 'Development',
+    description:
+        'Learn about the development workflow and best practices when building Enchanted modules.',
+}
+
+# Development
+
+Learn how to efficiently develop and test modules for your Enchanted server. {{ className: 'lead' }}
+
+## Development Environment
+
+First, set up your development environment:
+
+```bash {{ title: 'Setup' }}
+# Clone the repository
+git clone https://github.com/your-repo/enchanted
+cd enchanted
+
+# Install Deno
+curl -fsSL https://deno.land/x/install/install.sh | sh
+
+# Start development server
+deno task dev
+```
+
+<Note>
+    The development server automatically reloads your modules when changes are detected in the `modules/` directory.
+</Note>
+
+## Project Structure
+
+Organize your Enchanted project following this structure:
+
+```bash {{ title: 'Directory Structure' }}
+enchanted-server/
+├── modules/              # Your module files
+│   ├── Economy/
+│   ├── Permissions/
+│   └── Chat/
+├── core/                # Core server files
+├── api/                 # API endpoints
+├── docker-compose.yaml  # Docker configuration
+├── .env                # Environment variables
+├── deno.json           # Deno configuration
+└── main.ts             # Server entry point
+```
+
+## Module Development
+
+Create new modules using TypeScript decorators:
+
+<CodeGroup>
+
+    ```typescript {{ title: 'Basic Module' }}
+    @Module({
+    name: 'ExampleModule',
+    version: '1.0.0'
+})
+    export class ExampleModule {
+@Event('player_joined')
+    async handleJoin(context: ScriptContext) {
+    // Implementation
+}
+}
+    ```
+
+    ```typescript {{ title: 'With Commands' }}
+    @Module({
+    name: 'ExampleModule',
+    version: '1.0.0'
+})
+    export class ExampleModule {
+@Command(['example'])
+    @Description('Example command')
+    @Permission('player')
+    async handleCommand(context: ScriptContext) {
+    // Implementation
+}
+}
+    ```
+
+    ```typescript {{ title: 'With Storage' }}
+    @Module({
+    name: 'ExampleModule',
+    version: '1.0.0'
+})
+    export class ExampleModule {
+@Command(['store'])
+    async handleStore({ params, kv }: ScriptContext) {
+    await kv.set(['example', 'data'], {
+    value: 'stored'
+});
+}
+}
+    ```
+
+</CodeGroup>
+
+## Development Server
+
+The development server provides hot-reload capabilities:
+
+```json {{ title: 'deno.json' }}
+{
+  "tasks": {
+    "dev": "deno run -A --unstable-kv --watch=core/,api/ main.ts",
+    "check": "deno fmt --check && deno lint && deno check **/*.ts",
+    "start": "deno run -A --unstable-kv main.ts",
+    "build": "deno run -A --unstable-kv --unstable-broadcast-channel main.ts build"
+  }
+}
+```
+
+## Testing Modules
+
+Test your modules during development:
+
+<CodeGroup>
+
+    ```typescript {{ title: 'Command Testing' }}
+    // In-game testing
+    /example test
+
+    // Expected response in chat:
+    {
+        "text": "Command response",
+        "color": "green"
+    }
+    ```
+
+    ```typescript {{ title: 'WebSocket Testing' }}
+    // Connect to WebSocket
+    const socket = new WebSocket('ws://localhost:8081');
+
+    // Send test message
+    socket.send(JSON.stringify({
+    eventType: 'example_event',
+    data: {
+    test: true
+}
+}));
+    ```
+
+    ```typescript {{ title: 'Storage Testing' }}
+    // Check stored data in KV
+    const data = await kv.get(['example', 'data']);
+    console.log(data.value);
+    ```
+
+</CodeGroup>
+
+## Development Tools
+
+Essential tools for Enchanted development:
+
+```typescript {{ title: 'Available Tools' }}
+1. Deno CLI
+   - deno fmt         // Format code
+   - deno lint        // Lint code
+   - deno check       // Type check
+
+2. Docker Tools
+   - docker-compose up   // Start services
+   - docker-compose logs // View logs
+
+3. Development Server
+   - Hot reload
+   - Debug logging
+   - Error reporting
+```
+
+## Debugging
+
+Debug your modules effectively:
+
+```typescript {{ title: 'Debugging Examples' }}
+@Module({
+  name: 'DebugModule',
+  version: '1.0.0'
+})
+export class DebugModule {
+  @Event('player_joined')
+  async handleJoin({ params, log }: ScriptContext) {
+    // Use the logger
+    log(`Player joined: ${params.playerName}`);
+
+    // Debug specific values
+    log('Params:', JSON.stringify(params, null, 2));
+
+    try {
+      // Your code
+    } catch (error) {
+      // Log errors with stack traces
+      log(`Error: ${error.message}`);
+      log(`Stack: ${error.stack}`);
+    }
+  }
+}
+```
+
+## Development Configuration
+
+Configure your development environment:
+
+```typescript {{ title: '.env' }}
+# Development environment variables
+DENO_KV_ACCESS_TOKEN=your-secure-token-here
+DENO_KV_URL=http://kv:4512
+DENORITE_ALLOWED_ORIGIN=http://localhost:3000
+DENORITE_SERVER_SECRET=dev-secret
+DENORITE_JWT_SECRET=dev-jwt-secret
+```
+
+## Working with Docker
+
+Develop using Docker:
+
+```bash {{ title: 'Docker Commands' }}
+# Start development environment
+docker-compose up -d
+
+# View logs
+docker-compose logs -f server
+
+# Rebuild after changes
+docker-compose up -d --build
+
+# Stop services
+docker-compose down
+```
+
+## Module Hot Reloading
+
+Modules are automatically reloaded when changes are detected:
+
+```typescript {{ title: 'Hot Reload Process' }}
+1. Save changes to module file
+2. Development server detects changes
+3. Module is gracefully unloaded
+4. New version is loaded
+5. State is preserved in KV store
+```
+
+## Common Development Tasks
+
+Here are some common development tasks:
+
+<CodeGroup>
+
+    ```typescript {{ title: 'Format Code' }}
+    // Format all TypeScript files
+    deno fmt
+
+    // Check formatting
+    deno fmt --check
+    ```
+
+    ```typescript {{ title: 'Type Check' }}
+    // Check types
+    deno check **/*.ts
+
+    // Watch mode
+    deno check --watch **/*.ts
+    ```
+
+    ```typescript {{ title: 'Lint Code' }}
+    // Lint all files
+    deno lint
+
+    // Fix automatically
+    deno lint --fix
+    ```
+
+</CodeGroup>
+
+## Best Practices
+
+Follow these development best practices:
+
+```typescript {{ title: 'Development Guidelines' }}
+1. Use TypeScript strict mode
+2. Implement proper error handling
+3. Log meaningful debug information
+4. Use atomic operations for data
+5. Test edge cases
+6. Document your code
+7. Follow consistent naming
+```
+
+## Module Development Lifecycle
+
+Typical module development workflow:
+
+```typescript {{ title: 'Development Workflow' }}
+1. Create new module file
+2. Implement basic functionality
+3. Test in development
+4. Add error handling
+5. Implement storage
+6. Test edge cases
+7. Document features
+8. Deploy to production
+```
+
+## Example Development Module
+
+Here's a well-structured development module:
+
+```typescript {{ title: 'DevModule.ts' }}
+@Module({
+  name: 'DevModule',
+  version: '1.0.0'
+})
+export class DevModule {
+  // Command for development testing
+  @Command(['dev', 'test'])
+  @Permission('operator')
+  async testFeature({ params, kv, api, log }: ScriptContext) {
+    const { sender, args } = params;
+
+    try {
+      // Log development info
+      log(`Testing feature: ${args.feature}`);
+      log(`Arguments:`, JSON.stringify(args, null, 2));
+
+      // Test storage
+      await kv.set(['dev', 'test'], {
+        timestamp: Date.now(),
+        args
+      });
+
+      // Test API
+      await api.tellraw(sender, JSON.stringify({
+        text: "Test successful",
+        color: "green"
+      }));
+
+    } catch (error) {
+      // Detailed error logging
+      log(`Test error: ${error.message}`);
+      log(`Stack: ${error.stack}`);
+
+      await api.tellraw(sender, JSON.stringify({
+        text: `Test failed: ${error.message}`,
+        color: "red"
+      }));
+    }
+  }
+}
+```
+
+<div className="not-prose">
+    <Button href="/modules" variant="text" arrow="right">
+        <>Learn more about Modules</>
+    </Button>
+</div>

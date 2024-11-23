@@ -1,0 +1,397 @@
+
+export const metadata = {
+    title: 'Types',
+    description:
+        'Reference for TypeScript types and interfaces used in Enchanted modules.',
+}
+
+# Types
+
+Understanding the type system is crucial for developing type-safe Enchanted modules. {{ className: 'lead' }}
+
+## Core Types
+
+Essential types used throughout Enchanted:
+
+<CodeGroup>
+
+    ```typescript {{ title: 'ScriptContext' }}
+    interface ScriptContext {
+    params: Record<string, unknown>;
+    kv: Deno.Kv;
+    api: MinecraftApi;
+    auth: AuthContext;
+    log: (message: string) => void;
+    sendToPlayer: (playerId: string, data: unknown) => void;
+    broadcastPlayers: (data: unknown) => void;
+    messagePlayer: (
+    playerId: string,
+    message: string,
+    options?: MessageOptions
+    ) => Promise<void>;
+    playerManager: PlayerManager;
+    players: PlayerData[];
+    isOnline: (playerName: string) => boolean;
+    isOperator: (playerName: string) => boolean;
+}
+    ```
+
+    ```typescript {{ title: 'EventData' }}
+    interface EventData {
+    playerId: string;
+    playerName: string;
+    x: number;
+    y: number;
+    z: number;
+    dimension: string;
+    [key: string]: any;  // Additional event-specific data
+}
+    ```
+
+    ```typescript {{ title: 'PlayerData' }}
+    interface PlayerData {
+    name: string;
+    id: string;
+    role: 'guest' | 'player' | 'operator';
+    joinTime: string;
+    location?: {
+    x: number;
+    y: number;
+    z: number;
+    dimension: string;
+};
+    clientInfo?: {
+    ip: string;
+    version: string;
+};
+}
+    ```
+
+</CodeGroup>
+
+## Authentication Types
+
+Types related to authentication and permissions:
+
+```typescript {{ title: 'Auth Types' }}
+interface AuthContext {
+  createToken: (payload: TokenPayload) => Promise<string>;
+  verifyToken: (token: string) => Promise<TokenPayload>;
+  checkPermission: (
+    requiredLevel: PermissionLevel,
+    operatorLevel?: number
+  ) => Promise<boolean>;
+  getPlayerIdFromName: (playerName: string) => Promise<string | null>;
+  getPlayerNameFromId: (playerId: string) => Promise<string | null>;
+}
+
+interface TokenPayload {
+  id: string;
+  name: string;
+  role: PermissionLevel;
+  permissionLevel: number;
+  [key: string]: any;
+}
+
+type PermissionLevel = 'guest' | 'player' | 'operator';
+```
+
+## Decorator Types
+
+Types used in module decorators:
+
+```typescript {{ title: 'Decorator Types' }}
+interface ModuleOptions {
+  name: string;
+  version: string;
+  description?: string;
+}
+
+interface ArgumentDefinition {
+  name: string;
+  type: ArgumentType;
+  description: string;
+  optional?: boolean;
+  default?: any;
+  values?: string[];  // For enum type
+}
+
+type ArgumentType = 'string' | 'integer' | 'number' | 'boolean' | 'enum';
+
+interface CommandOptions {
+  aliases: string[];
+  description?: string;
+  permission?: PermissionLevel;
+  arguments?: ArgumentDefinition[];
+}
+```
+
+## API Types
+
+Types for the Minecraft API interface:
+
+```typescript {{ title: 'API Types' }}
+interface MinecraftApi {
+  executeCommand(command: string): Promise<string>;
+  tellraw(target: string, message: string): Promise<void>;
+  give(target: string, item: string, amount?: number): Promise<string>;
+  teleport(target: string, x: string, y: string, z: string): Promise<string>;
+  gamemode(mode: GameMode, target?: string): Promise<string>;
+  effect(
+    action: 'give' | 'clear',
+    target: string,
+    effect?: string,
+    duration?: number,
+    amplifier?: number
+  ): Promise<string>;
+  xp(
+    mode: 'get' | 'set' | 'add' | 'remove',
+    target: string,
+    amount?: number,
+    type?: 'points' | 'levels'
+  ): Promise<string>;
+  // ... more API methods
+}
+
+type GameMode = 'survival' | 'creative' | 'adventure' | 'spectator';
+
+interface MessageOptions {
+  color?: string;
+  bold?: boolean;
+  italic?: boolean;
+  underlined?: boolean;
+  sound?: string;
+}
+```
+
+## Event Types
+
+Types for different event data structures:
+
+```typescript {{ title: 'Event Types' }}
+// Player Events
+interface PlayerJoinEvent {
+  playerId: string;
+  playerName: string;
+  x: number;
+  y: number;
+  z: number;
+  dimension: string;
+  ip?: string;
+  version?: string;
+}
+
+interface PlayerDeathEvent {
+  playerId: string;
+  playerName: string;
+  deathMessage: string;
+  attackerId?: string;
+  attackerType?: string;
+  x: number;
+  y: number;
+  z: number;
+  dimension: string;
+}
+
+// Block Events
+interface BlockEvent {
+  playerId: string;
+  x: number;
+  y: number;
+  z: number;
+  block: string;
+  face?: string;
+}
+
+// Combat Events
+interface CombatEvent {
+  playerId: string;
+  entityId: string;
+  entityType: string;
+  damage: number;
+}
+```
+
+## Storage Types
+
+Types for working with Deno KV:
+
+```typescript {{ title: 'Storage Types' }}
+interface KVOperation {
+  type: 'set' | 'delete';
+  key: string[];
+  value?: any;
+}
+
+interface AtomicOperation {
+  check: (condition: { key: string[]; value?: any }) => AtomicOperation;
+  mutate: (operation: KVOperation) => AtomicOperation;
+  commit: () => Promise<{ ok: boolean }>;
+}
+
+interface KVResult<T> {
+  key: string[];
+  value: T | null;
+  versionstamp: string | null;
+}
+```
+
+## WebSocket Types
+
+Types for WebSocket communication:
+
+```typescript {{ title: 'WebSocket Types' }}
+interface SocketMessage {
+  eventType: string;
+  data?: any;
+  token?: string;
+  messageId?: string;
+}
+
+interface SocketResponse {
+  success: boolean;
+  data?: any;
+  error?: string;
+  messageId?: string;
+}
+
+interface SocketContext {
+  id: string;
+  type: 'minecraft' | 'player' | 'runner';
+  send: (data: any) => void;
+  close: () => void;
+}
+```
+
+## Utility Types
+
+Common utility types used across modules:
+
+```typescript {{ title: 'Utility Types' }}
+// Location type used in various contexts
+interface Location {
+  x: number;
+  y: number;
+  z: number;
+  dimension: string;
+}
+
+// Generic response type
+interface Result<T> {
+  success: boolean;
+  data?: T;
+  error?: string;
+}
+
+// Rate limiting
+interface RateLimitRule {
+  tokensPerInterval: number;
+  interval: number;  // in milliseconds
+  burstLimit: number;
+}
+
+// Logger type
+type LogFunction = (message: string, ...args: any[]) => void;
+```
+
+## Type Usage Example
+
+Here's how to use these types in a module:
+
+```typescript {{ title: 'TypedModule.ts' }}
+interface PlayerStats {
+  kills: number;
+  deaths: number;
+  lastSeen: string;
+  location: Location;
+}
+
+@Module({
+  name: 'TypedModule',
+  version: '1.0.0'
+})
+export class TypedModule {
+  private async getPlayerStats(
+    kv: Deno.Kv,
+    playerName: string
+  ): Promise<PlayerStats> {
+    const result = await kv.get(['player', playerName, 'stats']);
+    return result.value || {
+      kills: 0,
+      deaths: 0,
+      lastSeen: new Date().toISOString(),
+      location: { x: 0, y: 0, z: 0, dimension: 'overworld' }
+    };
+  }
+
+  @Event('player_death')
+  async handleDeath({
+    params,
+    kv,
+    log
+  }: ScriptContext): Promise<void> {
+    const event = params as PlayerDeathEvent;
+    try {
+      const stats = await this.getPlayerStats(kv, event.playerName);
+
+      const result = await kv.atomic()
+        .check({ key: ['player', event.playerName, 'stats'] })
+        .mutate({
+          type: 'set',
+          key: ['player', event.playerName, 'stats'],
+          value: {
+            ...stats,
+            deaths: stats.deaths + 1,
+            lastSeen: new Date().toISOString(),
+            location: {
+              x: event.x,
+              y: event.y,
+              z: event.z,
+              dimension: event.dimension
+            }
+          }
+        })
+        .commit();
+
+      if (!result.ok) {
+        throw new Error('Failed to update stats');
+      }
+    } catch (error) {
+      log(`Error updating stats: ${error.message}`);
+    }
+  }
+
+  @Socket('get_stats')
+  async getStats({
+    params,
+    kv,
+    auth
+  }: ScriptContext): Promise<Result<PlayerStats>> {
+    try {
+      if (!await auth.checkPermission('player')) {
+        return {
+          success: false,
+          error: 'Unauthorized'
+        };
+      }
+
+      const stats = await this.getPlayerStats(kv, params.playerName);
+      return {
+        success: true,
+        data: stats
+      };
+    } catch (error) {
+      return {
+        success: false,
+        error: error.message
+      };
+    }
+  }
+}
+```
+
+<div className="not-prose">
+    <Button href="/modules" variant="text" arrow="right">
+        <>Learn about Modules</>
+    </Button>
+</div>

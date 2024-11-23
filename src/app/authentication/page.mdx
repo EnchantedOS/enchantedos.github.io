@@ -1,41 +1,246 @@
 export const metadata = {
   title: 'Authentication',
   description:
-    'In this guide, we’ll look at how authentication works. Protocol offers two ways to authenticate your API requests: Basic authentication and OAuth2 with a token.',
+    'Learn how to implement token-based authentication in your Enchanted server.',
 }
 
 # Authentication
 
-You'll need to authenticate your requests to access any of the endpoints in the Protocol API. In this guide, we'll look at how authentication works. Protocol offers two ways to authenticate your API requests: Basic authentication and OAuth2 with a token — OAuth2 is the recommended way. {{ className: 'lead' }}
+Enchanted uses JWT tokens for authentication and permission management. This guide shows how to implement a basic authentication module for your server. {{ className: 'lead' }}
 
-## Basic authentication
+<Note>
+  While Enchanted handles token verification internally, you need to implement token generation and management through a module. Here's a minimal example to get you started.
+</Note>
 
-With basic authentication, you use your username and password to authenticate your HTTP requests. Unless you have a very good reason, you probably shouldn't use basic auth. Here's how to authenticate using cURL:
+## Basic Auth Module
 
-```bash {{ title: 'Example request with basic auth' }}
-curl https://api.protocol.chat/v1/conversations \
-  -u username:password
+Here's a minimal authentication module implementation:
+
+```typescript {{ title: 'modules/AuthModule.ts' }}
+@Module({
+  name: 'AuthModule',
+  version: '1.0.0'
+})
+export class AuthModule {
+  @Socket('login')
+  async handleLogin({ params, kv, auth }: ScriptContext) {
+    const { username, password } = params;
+
+    try {
+      // Validate credentials against KV store
+      const userResult = await kv.get(['users', username]);
+      const user = userResult.value;
+
+      if (!user || user.password !== password) {
+        return {
+          success: false,
+          message: 'Invalid credentials'
+        };
+      }
+
+      // Generate JWT token
+      const token = await auth.createToken({
+        id: user.id,
+        name: username,
+        role: user.role || 'player',
+        permissionLevel: user.role === 'operator' ? 4 : 1
+      });
+
+      return {
+        success: true,
+        token,
+        user: {
+          username,
+          role: user.role
+        }
+      };
+    } catch (error) {
+      return {
+        success: false,
+        message: error.message
+      };
+    }
+  }
+
+  @Command(['register'])
+  @Permission('operator')
+  async registerUser({ params, kv, api }: ScriptContext) {
+    const { sender, args } = params;
+    const username = args.username;
+    const password = args.password;
+    const role = args.role || 'player';
+
+    try {
+      const exists = await kv.get(['users', username]);
+      if (exists.value) {
+        throw new Error('User already exists');
+      }
+
+      await kv.set(['users', username], {
+        id: crypto.randomUUID(),
+        password,
+        role,
+        createdAt: new Date().toISOString()
+      });
+
+      await api.tellraw(sender, JSON.stringify({
+        text: `User ${username} registered successfully`,
+        color: "green"
+      }));
+    } catch (error) {
+      await api.tellraw(sender, JSON.stringify({
+        text: `Error: ${error.message}`,
+        color: "red"
+      }));
+    }
+  }
+}
 ```
 
-Please don't commit your Protocol password to GitHub!
+## Client Usage
 
-## OAuth2 with bearer token
+To authenticate from a client:
 
-The recommended way to authenticate with the Protocol API is by using OAuth2. When establishing a connection using OAuth2, you will need your access token — you will find it in the [Protocol dashboard](#) under API settings. Here's how to add the token to the request header using cURL:
+<CodeGroup>
 
-```bash {{ title: 'Example request with bearer token' }}
-curl https://api.protocol.chat/v1/conversations \
-  -H "Authorization: Bearer {token}"
+    ```typescript {{ title: 'Login Request' }}
+    socket.send(JSON.stringify({
+    eventType: 'login',
+    data: {
+    username: 'player123',
+    password: 'secure-password'
+}
+}));
+    ```
+
+    ```typescript {{ title: 'Success Response' }}
+    {
+        "success": true,
+        "token": "your.jwt.token",
+        "user": {
+        "username": "player123",
+        "role": "player"
+    }
+    }
+    ```
+
+    ```typescript {{ title: 'Using the Token' }}
+    // After receiving token, use it for subsequent requests
+    socket.send(JSON.stringify({
+    eventType: 'auth',
+    data: {
+    token: 'your.jwt.token'
+}
+}));
+    ```
+
+</CodeGroup>
+
+## Permission Levels
+
+Enchanted supports two primary permission levels:
+
+```typescript {{ title: 'Permission Levels' }}
+{
+  player: 1,     // Regular player access
+  operator: 4    // Administrative access
+}
 ```
 
-Always keep your token safe and reset it if you suspect it has been compromised.
+<Note>
+    Only use permission level 4 (operator) for administrative accounts. Regular players should always use level 1.
+</Note>
 
-## Using an SDK
+## Token Structure
 
-If you use one of our official SDKs, you won't have to worry about any of the above — fetch your access token from the [Protocol dashboard](#) under API settings, and the client library will take care of the rest. All the client libraries use OAuth2 behind the scenes.
+When creating tokens, include these essential fields:
+
+```typescript {{ title: 'Token Payload' }}
+interface TokenPayload {
+  id: string;          // Unique user ID
+  name: string;        // Username
+  role: string;        // 'player' or 'operator'
+  permissionLevel: number; // 1 or 4
+}
+```
+
+## Secure Storage
+
+Store user data securely in the KV store:
+
+```typescript {{ title: 'KV Storage Structure' }}
+// User data structure
+['users', username] = {
+  id: string;          // UUID
+  password: string;    // Hashed password
+  role: string;        // User role
+  createdAt: string;   // ISO date string
+}
+
+// Example KV operations
+await kv.set(['users', username], userData);
+const user = await kv.get(['users', username]);
+```
+
+## Security Best Practices
+
+When implementing authentication:
+
+```typescript {{ title: 'Security Checklist' }}
+1. Hash passwords before storage
+2. Use secure password validation
+3. Implement rate limiting
+4. Add password complexity requirements
+5. Validate all input data
+6. Implement token expiration
+7. Store sensitive data securely
+```
+
+## Enhanced Implementation
+
+For production use, enhance the basic module with these features:
+
+<CodeGroup>
+
+    ```typescript {{ title: 'Password Hashing' }}
+    import { crypto } from "$std/crypto/mod.ts";
+
+    private async hashPassword(password: string): Promise<string> {
+    const encoder = new TextEncoder();
+    const data = encoder.encode(password);
+    const hash = await crypto.subtle.digest('SHA-256', data);
+    return btoa(String.fromCharCode(...new Uint8Array(hash)));
+}
+    ```
+
+    ```typescript {{ title: 'Rate Limiting' }}
+    @Socket('login')
+    async handleLogin({ params, kv, auth }: ScriptContext) {
+        const attempts = await kv.get(['login_attempts', params.username]);
+        if (attempts.value > 5) {
+        return {
+        success: false,
+        message: 'Too many attempts. Try again later.'
+    };
+    }
+        // ... rest of login logic
+    }
+    ```
+
+</CodeGroup>
+
+## What's next?
+
+After implementing authentication:
+
+- Add password reset functionality
+- Implement session management
+- Add two-factor authentication
+- Create user management commands
+- Add role-based permissions
 
 <div className="not-prose">
-  <Button href="/sdks" variant="text" arrow="right">
-    <>Check out our list of first-party SDKs</>
-  </Button>
+    <Button href="/modules" variant="text" arrow="right">
+        <>Learn more about Modules</>
+    </Button>
 </div>

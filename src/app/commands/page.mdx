@@ -1,0 +1,406 @@
+
+export const metadata = {
+    title: 'Commands',
+    description:
+        'Learn how to create and handle Minecraft commands in your Enchanted modules.',
+}
+
+# Commands
+
+Commands allow players to interact with your modules through Minecraft's chat interface. {{ className: 'lead' }}
+
+## Command Basics
+
+Register commands using the `@Command` decorator:
+
+```typescript {{ title: 'Basic Command' }}
+@Module({
+  name: 'ExampleModule',
+  version: '1.0.0'
+})
+export class ExampleModule {
+  @Command(['help'])
+  @Description('Show help message')
+  @Permission('player')
+  async helpCommand({ params, api }: ScriptContext) {
+    const { sender } = params;
+    await api.tellraw(sender, JSON.stringify({
+      text: "Help message",
+      color: "gold"
+    }));
+  }
+}
+```
+
+## Command Arguments
+
+Define command arguments using the `@Argument` decorator:
+
+<CodeGroup>
+
+    ```typescript {{ title: 'Basic Arguments' }}
+    @Command(['give'])
+    @Description('Give items to a player')
+    @Permission('operator')
+    @Argument([
+    {
+        name: 'player',
+        type: 'string',
+        description: 'Target player'
+    },
+    {
+        name: 'item',
+        type: 'string',
+        description: 'Item to give'
+    },
+    {
+        name: 'amount',
+        type: 'integer',
+        description: 'Amount',
+        optional: true
+    }
+    ])
+    async giveCommand({ params, api }: ScriptContext) {
+    const { sender, args } = params;
+    await api.give(args.player, args.item, args.amount || 1);
+}
+    ```
+
+    ```typescript {{ title: 'Argument Types' }}
+    @Command(['setrank'])
+    @Argument([
+    {
+        name: 'player',
+        type: 'string',
+        description: 'Player name'
+    },
+    {
+        name: 'rank',
+        type: 'enum',
+        values: ['vip', 'mvp', 'admin'],
+        description: 'New rank'
+    },
+    {
+        name: 'duration',
+        type: 'integer',
+        description: 'Duration in days',
+        optional: true,
+        default: 30
+    }
+    ])
+    async setRankCommand({ params }: ScriptContext) {
+    // Command implementation
+}
+    ```
+
+</CodeGroup>
+
+## Subcommands
+
+Organize complex commands using subcommands:
+
+```typescript {{ title: 'Subcommands' }}
+@Module({
+  name: 'ShopModule',
+  version: '1.0.0'
+})
+export class ShopModule {
+  @Command(['shop', 'buy'])
+  @Description('Buy an item')
+  @Argument([
+    { name: 'item', type: 'string' },
+    { name: 'amount', type: 'integer', optional: true }
+  ])
+  async buyCommand({ params }: ScriptContext) {
+    // Buy implementation
+  }
+
+  @Command(['shop', 'sell'])
+  @Description('Sell an item')
+  @Argument([
+    { name: 'item', type: 'string' },
+    { name: 'amount', type: 'integer', optional: true }
+  ])
+  async sellCommand({ params }: ScriptContext) {
+    // Sell implementation
+  }
+}
+```
+
+## Command Responses
+
+Create rich command responses using Minecraft's JSON text format:
+
+<CodeGroup>
+
+    ```typescript {{ title: 'Basic Response' }}
+    await api.tellraw(sender, JSON.stringify({
+    text: "Command executed successfully!",
+    color: "green",
+    bold: true
+}));
+    ```
+
+    ```typescript {{ title: 'Advanced Response' }}
+    await api.tellraw(sender, JSON.stringify([
+    {
+        text: "Click here",
+        color: "yellow",
+        clickEvent: {
+        action: "run_command",
+        value: "/shop buy diamond"
+    },
+        hoverEvent: {
+        action: "show_text",
+        value: "Buy a diamond"
+    }
+    },
+    {
+        text: " to purchase a diamond",
+        color: "white"
+    }
+    ]));
+    ```
+
+    ```typescript {{ title: 'Error Response' }}
+    await api.tellraw(sender, JSON.stringify({
+    text: "Error: Insufficient funds",
+    color: "red",
+    italic: true
+}));
+    ```
+
+</CodeGroup>
+
+## Command Permissions
+
+Control command access using the `@Permission` decorator:
+
+```typescript {{ title: 'Permission Levels' }}
+// Available to all players
+@Command(['balance'])
+@Permission('player')
+async balanceCommand() {
+  // Implementation
+}
+
+// Only available to operators
+@Command(['give'])
+@Permission('operator')
+async giveCommand() {
+  // Implementation
+}
+
+// Available without authentication
+@Command(['register'])
+@Permission('guest')
+async registerCommand() {
+  // Implementation
+}
+```
+
+## Command Error Handling
+
+Handle command errors gracefully:
+
+```typescript {{ title: 'Error Handling' }}
+@Command(['transfer'])
+@Permission('player')
+async transferCommand({ params, api, kv }: ScriptContext) {
+  const { sender, args } = params;
+
+  try {
+    // Validate arguments
+    if (!args.amount || args.amount <= 0) {
+      throw new Error('Invalid amount');
+    }
+
+    if (!args.target) {
+      throw new Error('Target player required');
+    }
+
+    // Check balance
+    const balance = await kv.get(['player', sender, 'balance']);
+    if (balance.value < args.amount) {
+      throw new Error('Insufficient funds');
+    }
+
+    // Perform transfer
+    // ...
+
+    // Success message
+    await api.tellraw(sender, JSON.stringify({
+      text: `Transferred ${args.amount} coins to ${args.target}`,
+      color: "green"
+    }));
+
+  } catch (error) {
+    // Error message
+    await api.tellraw(sender, JSON.stringify({
+      text: `Error: ${error.message}`,
+      color: "red"
+    }));
+  }
+}
+```
+
+## Complete Example
+
+Here's a comprehensive command module example:
+
+```typescript {{ title: 'BankModule.ts' }}
+interface BankAccount {
+  balance: number;
+  transactions: Array<{
+    type: 'deposit' | 'withdraw' | 'transfer';
+    amount: number;
+    target?: string;
+    timestamp: string;
+  }>;
+}
+
+@Module({
+  name: 'BankModule',
+  version: '1.0.0'
+})
+export class BankModule {
+  private async getAccount(
+    kv: Deno.Kv,
+    playerName: string
+  ): Promise<BankAccount> {
+    const account = await kv.get(['bank', playerName]);
+    return account.value || {
+      balance: 0,
+      transactions: []
+    };
+  }
+
+  private async updateAccount(
+    kv: Deno.Kv,
+    playerName: string,
+    update: (account: BankAccount) => BankAccount
+  ): Promise<void> {
+    const result = await kv.atomic()
+      .check({ key: ['bank', playerName] })
+      .mutate({
+        type: 'set',
+        key: ['bank', playerName],
+        value: update(await this.getAccount(kv, playerName))
+      })
+      .commit();
+
+    if (!result.ok) {
+      throw new Error('Transaction failed');
+    }
+  }
+
+  @Command(['balance'])
+  @Description('Check your balance')
+  @Permission('player')
+  async balanceCommand({ params, api, kv }: ScriptContext) {
+    const { sender } = params;
+
+    try {
+      const account = await this.getAccount(kv, sender);
+
+      await api.tellraw(sender, JSON.stringify([
+        {
+          text: "Balance: ",
+          color: "gold"
+        },
+        {
+          text: `${account.balance} coins`,
+          color: "yellow",
+          bold: true
+        }
+      ]));
+
+    } catch (error) {
+      await api.tellraw(sender, JSON.stringify({
+        text: `Error: ${error.message}`,
+        color: "red"
+      }));
+    }
+  }
+
+  @Command(['transfer'])
+  @Description('Transfer money to another player')
+  @Permission('player')
+  @Argument([
+    { name: 'target', type: 'string', description: 'Target player' },
+    { name: 'amount', type: 'integer', description: 'Amount to transfer' }
+  ])
+  async transferCommand({ params, api, kv }: ScriptContext) {
+    const { sender, args } = params;
+
+    try {
+      // Validate amount
+      if (args.amount <= 0) {
+        throw new Error('Amount must be positive');
+      }
+
+      // Get accounts
+      const senderAccount = await this.getAccount(kv, sender);
+
+      // Check balance
+      if (senderAccount.balance < args.amount) {
+        throw new Error('Insufficient funds');
+      }
+
+      // Perform transfer
+      const timestamp = new Date().toISOString();
+
+      await this.updateAccount(kv, sender, account => ({
+        ...account,
+        balance: account.balance - args.amount,
+        transactions: [
+          {
+            type: 'transfer',
+            amount: args.amount,
+            target: args.target,
+            timestamp
+          },
+          ...account.transactions
+        ]
+      }));
+
+      await this.updateAccount(kv, args.target, account => ({
+        ...account,
+        balance: account.balance + args.amount,
+        transactions: [
+          {
+            type: 'transfer',
+            amount: args.amount,
+            target: sender,
+            timestamp
+          },
+          ...account.transactions
+        ]
+      }));
+
+      // Success messages
+      await api.tellraw(sender, JSON.stringify({
+        text: `Transferred ${args.amount} coins to ${args.target}`,
+        color: "green"
+      }));
+
+      await api.tellraw(args.target, JSON.stringify({
+        text: `Received ${args.amount} coins from ${sender}`,
+        color: "green"
+      }));
+
+    } catch (error) {
+      await api.tellraw(sender, JSON.stringify({
+        text: `Transfer failed: ${error.message}`,
+        color: "red"
+      }));
+    }
+  }
+}
+```
+
+<div className="not-prose">
+    <Button href="/modules" variant="text" arrow="right">
+        <>Learn about Modules</>
+    </Button>
+</div>

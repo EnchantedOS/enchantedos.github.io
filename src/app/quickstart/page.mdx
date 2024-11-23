@@ -1,98 +1,141 @@
 export const metadata = {
   title: 'Quickstart',
   description:
-    'This guide will get you all set up and ready to use the Protocol API. We’ll cover how to get started an API client and how to make your first API request.',
+    "This guide will get you all set up and ready to use Enchanted. We'll cover how to get started with modules and make your first server enhancement.",
 }
 
 # Quickstart
 
-This guide will get you all set up and ready to use the Protocol API. We'll cover how to get started using one of our API clients and how to make your first API request. We'll also look at where to go next to find all the information you need to take full advantage of our powerful REST API. {{ className: 'lead' }}
+This guide will get you all set up and ready to use Enchanted. We'll cover how to install the framework, create your first module, and enhance your Minecraft server with real-time features. We'll also look at where to go next to find all the information you need to take full advantage of our powerful framework. {{ className: 'lead' }}
 
 <Note>
-  Before you can make requests to the Protocol API, you will need to grab your
-  API key from your dashboard. You find it under [Settings &raquo; API](#).
+  Before you can start using Enchanted, you need to have Deno 2.0+ installed and a Minecraft server running with the Fabric mod loader. Make sure you have the correct version of Minecraft for the Enchanted Fabric mod.
 </Note>
 
-## Choose your client
+## Choose your setup
 
-Before making your first API request, you need to pick which API client you will use. In addition to good ol' cURL HTTP requests, Protocol offers clients for JavaScript, Python, and PHP. In the following example, you can see how to install each client.
+Before creating your first module, you need to set up the Enchanted environment. You can either start with our template project or set up everything manually. Below you'll see how to get started with each approach.
 
 <CodeGroup>
 
-```bash {{ title: 'cURL' }}
-# cURL is most likely already installed on your machine
-curl --version
+```bash {{ title: 'Template' }}
+# Clone the template project
+git clone https://github.com/enchanted/template
+cd template
+
+# Install dependencies
+deno cache deps.ts
 ```
 
-```bash {{ language: 'js' }}
-# Install the Protocol JavaScript SDK
-npm install @example/protocol-api --save
+```bash {{ title: 'Manual' }}
+# Create a new project directory
+mkdir my-enchanted-server
+cd my-enchanted-server
+
+# Initialize project
+deno init
+touch denorite.json
 ```
 
-```bash {{ language: 'python' }}
-# Install the Protocol Python SDK
-pip install protocol_api
-```
-
-```bash {{ language: 'php' }}
-# Install the Protocol PHP SDK
-composer require protocol/sdk
+```bash {{ title: 'Docker' }}
+# Pull and run the Enchanted image
+docker pull enchanted/server
+docker run -p 8080:8080 enchanted/server
 ```
 
 </CodeGroup>
 
 <div className="not-prose">
-  <Button href="/sdks" variant="text" arrow="right">
-    <>Check out our list of first-party SDKs</>
-  </Button>
+    <Button href="/installation" variant="text" arrow="right">
+        <>Check out our detailed installation guide</>
+    </Button>
 </div>
 
-## Making your first API request
+## Creating your first module
 
-After picking your preferred client, you are ready to make your first call to the Protocol API. Below, you can see how to send a GET request to the Conversations endpoint to get a list of all your conversations. In the cURL example, results are limited to ten conversations, the default page length for each client.
+After setting up your environment, you're ready to create your first Enchanted module. Below, you can see how to create a simple welcome module that responds to player joins and adds a custom command.
 
-<CodeGroup tag="GET" label="/v1/conversations">
+<CodeGroup tag="MODULE" label="welcome.ts">
 
-```bash {{ title: 'cURL' }}
-curl -G https://api.protocol.chat/v1/conversations \
-  -H "Authorization: Bearer {token}" \
-  -d limit=10
-```
+    ```typescript {{ title: 'Welcome Module' }}
+    @Module({
+        name: 'WelcomeModule',
+        version: '1.0.0'
+    })
+    export class WelcomeModule {
+        @Event('player_joined')
+            async onPlayerJoin({ params, api }: ScriptContext) {
+            const { playerName } = params;
+            await api.tellraw(playerName, JSON.stringify({
+                text: "Welcome to the server!",
+                color: "gold",
+                bold: true
+            }));
+        }
+    }
+    ```
 
-```js
-import ApiClient from '@example/protocol-api'
+    ```typescript {{ title: 'With Command' }}
+    @Module({
+        name: 'WelcomeModule',
+        version: '1.0.0'
+    })
+    export class WelcomeModule {
+        @Command(['greet'])
+        @Description('Send a greeting')
+        @Permission('player')
+        async greetCommand({ params, api }: ScriptContext) {
+            const { sender } = params;
+            await api.tellraw(sender, JSON.stringify({
+                text: "Hello there!",
+                color: "green"
+            }));
+        }
+    }
+    ```
 
-const client = new ApiClient(token)
+    ```typescript {{ title: 'With Storage' }}
+    @Module({
+        name: 'WelcomeModule',
+        version: '1.0.0'
+    })
+    export class WelcomeModule {
+        @Event('player_joined')
+        async onPlayerJoin({ params, kv, api }: ScriptContext) {
+            const { playerName } = params;
+            const joins = await kv.get(['stats', playerName, 'joins']);
+            const count = (joins.value || 0) + 1;
 
-await client.conversations.list()
-```
-
-```python
-from protocol_api import ApiClient
-
-client = ApiClient(token)
-
-client.conversations.list()
-```
-
-```php
-$client = new \Protocol\ApiClient($token);
-
-$client->conversations->list();
-```
+            await kv.set(['stats', playerName, 'joins'], count);
+            await api.tellraw(playerName, JSON.stringify({
+                text: `Welcome back! Visit #${count}`,
+                color: "gold"
+            }));
+        }
+    }
+    ```
 
 </CodeGroup>
 
 <div className="not-prose">
-  <Button href="/conversations" variant="text" arrow="right">
-    <>Read the docs for the Conversations endpoint</>
-  </Button>
+    <Button href="/modules" variant="text" arrow="right">
+        <>Read the documentation for Modules</>
+    </Button>
 </div>
 
 ## What's next?
 
-Great, you're now set up with an API client and have made your first request to the API. Here are a few links that might be handy as you venture further into the Protocol API:
+Great! You've set up your environment and created your first module. Here are a few links that might be handy as you continue exploring Enchanted:
 
-- [Grab your API key from the Protocol dashboard](#)
-- [Check out the Conversations endpoint](/conversations)
-- [Learn about the different error messages in Protocol](/errors)
+- [Learn about the Event System](/events)
+- [Explore the Command System](/commands)
+- [Understand Storage and State](/storage)
+- [Browse example modules](/examples/basic-module)
+- [View the full Minecraft API reference](/minecraft-api)
+
+Ready to enhance your server further? Check out these common enhancements:
+
+- [Create an Economy System](/examples/economy)
+- [Add Custom Commands](/examples/commands)
+- [Track Player Statistics](/examples/player-stats)
+- [Enhance Chat Features](/examples/chat)

@@ -1,0 +1,374 @@
+
+export const metadata = {
+    title: 'Basic Module Example',
+    description:
+        'Learn how to create your first Enchanted module with this comprehensive example.',
+}
+
+# Basic Module Example
+
+Let's create a basic welcome module that demonstrates core Enchanted features including events, commands, storage, and socket communication. {{ className: 'lead' }}
+
+## Complete Module
+
+Here's a basic welcome module that showcases common patterns:
+
+```typescript {{ title: 'WelcomeModule.ts' }}
+interface WelcomeMessage {
+  message: string;
+  color: string;
+  enabled: boolean;
+}
+
+interface PlayerStats {
+  firstJoin: string;
+  lastSeen: string;
+  visits: number;
+}
+
+@Module({
+  name: 'WelcomeModule',
+  version: '1.0.0'
+})
+export class WelcomeModule {
+  // Utility method to get player stats
+  private async getStats(kv: Deno.Kv, playerName: string): Promise<PlayerStats> {
+    const stats = await kv.get(['player', playerName, 'stats']);
+    return stats.value || {
+      firstJoin: new Date().toISOString(),
+      lastSeen: new Date().toISOString(),
+      visits: 0
+    };
+  }
+
+  // Event handler for player joins
+  @Event('player_joined')
+  async handlePlayerJoin({ params, kv, api, log }: ScriptContext) {
+    const { playerName } = params;
+
+    try {
+      // Get or create player stats
+      const stats = await this.getStats(kv, playerName);
+
+      // Update stats atomically
+      await kv.atomic()
+        .check({ key: ['player', playerName, 'stats'] })
+        .mutate({
+          type: 'set',
+          key: ['player', playerName, 'stats'],
+          value: {
+            ...stats,
+            lastSeen: new Date().toISOString(),
+            visits: stats.visits + 1
+          }
+        })
+        .commit();
+
+      // Get welcome message
+      const welcomeConfig = await kv.get(['welcome', 'config']);
+      const config = welcomeConfig.value || {
+        message: 'Welcome to the server!',
+        color: 'gold',
+        enabled: true
+      };
+
+      if (config.enabled) {
+        // Send different messages for new/returning players
+        if (stats.visits === 0) {
+          await api.tellraw(playerName, JSON.stringify([
+            {
+              text: config.message + '\n',
+              color: config.color,
+              bold: true
+            },
+            {
+              text: "This appears to be your first visit!",
+              color: "aqua"
+            }
+          ]));
+        } else {
+          await api.tellraw(playerName, JSON.stringify([
+            {
+              text: config.message + '\n',
+              color: config.color
+            },
+            {
+              text: `Welcome back! Visit #${stats.visits + 1}`,
+              color: "yellow"
+            }
+          ]));
+        }
+      }
+
+      log(`Player ${playerName} joined (Visit #${stats.visits + 1})`);
+
+    } catch (error) {
+      log(`Error in handlePlayerJoin: ${error.message}`);
+    }
+  }
+
+  // Command to view your join stats
+  @Command(['visits'])
+  @Description('View your visit statistics')
+  @Permission('player')
+  async viewVisits({ params, kv, api }: ScriptContext) {
+    const { sender } = params;
+
+    try {
+      const stats = await this.getStats(kv, sender);
+
+      await api.tellraw(sender, JSON.stringify([
+        { text: "=== Visit Statistics ===\n", color: "gold", bold: true },
+        { text: `First Join: ${new Date(stats.firstJoin).toLocaleString()}\n`, color: "aqua" },
+        { text: `Last Seen: ${new Date(stats.lastSeen).toLocaleString()}\n`, color: "yellow" },
+        { text: `Total Visits: ${stats.visits}`, color: "green" }
+      ]));
+
+    } catch (error) {
+      await api.tellraw(sender, JSON.stringify({
+        text: `Error: ${error.message}`,
+        color: "red"
+      }));
+    }
+  }
+
+  // Admin command to configure welcome message
+  @Command(['welcome', 'config'])
+  @Description('Configure welcome message')
+  @Permission('operator')
+  @Argument([
+    { name: 'message', type: 'string', description: 'Welcome message' },
+    { name: 'color', type: 'string', description: 'Message color', optional: true },
+    { name: 'enabled', type: 'boolean', description: 'Enable/disable welcome', optional: true }
+  ])
+  async configureWelcome({ params, kv, api }: ScriptContext) {
+    const { sender, args } = params;
+
+    try {
+      // Get current config
+      const current = await kv.get(['welcome', 'config']);
+      const config = current.value || {
+        message: 'Welcome to the server!',
+        color: 'gold',
+        enabled: true
+      };
+
+      // Update config
+      await kv.set(['welcome', 'config'], {
+        message: args.message || config.message,
+        color: args.color || config.color,
+        enabled: args.enabled ?? config.enabled
+      });
+
+      await api.tellraw(sender, JSON.stringify({
+        text: "Welcome message configuration updated!",
+        color: "green"
+      }));
+
+    } catch (error) {
+      await api.tellraw(sender, JSON.stringify({
+        text: `Error: ${error.message}`,
+        color: "red"
+      }));
+    }
+  }
+
+  // Socket handler to get player statistics
+  @Socket('get_player_stats')
+  async getPlayerStats({ params, kv, auth }: ScriptContext) {
+    try {
+      // Verify authentication
+      if (!await auth.checkPermission('player')) {
+        return {
+          success: false,
+          error: 'Unauthorized'
+        };
+      }
+
+      const { playerName } = params;
+      const stats = await this.getStats(kv, playerName);
+
+      return {
+        success: true,
+        data: stats
+      };
+
+    } catch (error) {
+      return {
+        success: false,
+        error: error.message
+      };
+    }
+  }
+}
+```
+
+## Module Breakdown
+
+Let's examine each part of the module:
+
+### Data Interfaces
+
+First, we define our data structures:
+
+```typescript {{ title: 'Interfaces' }}
+// Welcome message configuration
+interface WelcomeMessage {
+  message: string;  // The welcome message text
+  color: string;    // Message color
+  enabled: boolean; // Whether welcomes are enabled
+}
+
+// Player statistics
+interface PlayerStats {
+  firstJoin: string;  // First join timestamp
+  lastSeen: string;   // Last seen timestamp
+  visits: number;     // Total visits
+}
+```
+
+### Event Handling
+
+The module responds to player joins:
+
+```typescript {{ title: 'Event Handler' }}
+@Event('player_joined')
+async handlePlayerJoin({ params, kv, api, log }: ScriptContext) {
+  // Update player stats
+  const stats = await this.getStats(kv, playerName);
+
+  // Send welcome message
+  await api.tellraw(playerName, JSON.stringify({
+    text: "Welcome to the server!",
+    color: "gold"
+  }));
+}
+```
+
+### Commands
+
+We provide player and admin commands:
+
+<CodeGroup>
+
+    ```typescript {{ title: 'Player Command' }}
+    @Command(['visits'])
+    @Description('View your visit statistics')
+    @Permission('player')
+    async viewVisits({ params, kv, api }: ScriptContext) {
+    const stats = await this.getStats(kv, params.sender);
+    // Display stats to player
+}
+    ```
+
+    ```typescript {{ title: 'Admin Command' }}
+    @Command(['welcome', 'config'])
+    @Description('Configure welcome message')
+    @Permission('operator')
+    async configureWelcome({ params, kv, api }: ScriptContext) {
+    // Update welcome configuration
+}
+    ```
+
+</CodeGroup>
+
+### Storage
+
+The module uses Deno KV for persistent storage:
+
+```typescript {{ title: 'Storage Usage' }}
+// Get player stats
+const stats = await kv.get(['player', playerName, 'stats']);
+
+// Update stats atomically
+await kv.atomic()
+  .check({ key: ['player', playerName, 'stats'] })
+  .mutate({
+    type: 'set',
+    key: ['player', playerName, 'stats'],
+    value: newStats
+  })
+  .commit();
+```
+
+### Socket Communication
+
+We provide a WebSocket endpoint for stats:
+
+```typescript {{ title: 'Socket Handler' }}
+@Socket('get_player_stats')
+async getPlayerStats({ params, kv, auth }: ScriptContext) {
+  // Verify authentication
+  if (!await auth.checkPermission('player')) {
+    return { success: false, error: 'Unauthorized' };
+  }
+
+  // Return player stats
+  const stats = await this.getStats(kv, params.playerName);
+  return { success: true, data: stats };
+}
+```
+
+## Usage Examples
+
+Here's how to use the module:
+
+<CodeGroup>
+
+    ```bash {{ title: 'Player Commands' }}
+    # View your visit stats
+    /visits
+    ```
+
+    ```bash {{ title: 'Admin Commands' }}
+    # Configure welcome message
+    /welcome config "Welcome to our server!" yellow true
+    ```
+
+    ```typescript {{ title: 'WebSocket Usage' }}
+    // Get player stats via WebSocket
+    socket.send(JSON.stringify({
+    eventType: 'get_player_stats',
+    data: {
+    playerName: 'player123'
+}
+}));
+    ```
+
+</CodeGroup>
+
+## Key Concepts Demonstrated
+
+This basic module shows several important patterns:
+
+1. **Decorator Usage**
+- `@Module` for module definition
+- `@Event` for event handling
+- `@Command` for commands
+- `@Permission` for access control
+- `@Socket` for WebSocket communication
+
+2. **Data Management**
+- Interface definitions
+- Storage operations
+- Atomic updates
+
+3. **Error Handling**
+- Try-catch blocks
+- Error responses
+- Logging
+
+4. **User Communication**
+- Chat messages
+- Command responses
+- WebSocket responses
+
+5. **Authentication**
+- Permission checking
+- Role-based access
+
+<div className="not-prose">
+    <Button href="/examples/economy" variant="text" arrow="right">
+        <>View Economy Module Example</>
+    </Button>
+</div>

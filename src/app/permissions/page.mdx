@@ -1,0 +1,293 @@
+export const metadata = {
+    title: 'Permissions',
+    description:
+        "Learn how to work with Enchanted's permission system to secure your server modules.",
+}
+
+# Permissions
+
+Enchanted uses a simple but effective permission system based on roles and decorators to secure your modules. {{ className: 'lead' }}
+
+## Permission Levels
+
+Enchanted implements three basic permission levels:
+
+```typescript {{ title: 'Core Permission Levels' }}
+type PermissionLevel = 'guest' | 'player' | 'operator'
+
+interface Permissions {
+  guest: 0,      // Unauthenticated access
+  player: 1,     // Regular player access
+  operator: 4    // Administrative access
+}
+```
+
+## Using Permissions
+
+Secure your module methods using the `@Permission` decorator:
+
+<CodeGroup>
+
+    ```typescript {{ title: 'Basic Usage' }}
+    @Command(['balance'])
+    @Permission('player')
+    async checkBalance({ params, kv }: ScriptContext) {
+    // Only authenticated players can access
+}
+
+    @Command(['give'])
+    @Permission('operator')
+    async giveItems({ params, api }: ScriptContext) {
+    // Only operators can access
+}
+    ```
+
+    ```typescript {{ title: 'Socket Handler' }}
+    @Socket('user_data')
+    async handleUserData({ params, kv, auth }: ScriptContext) {
+    // Check permission manually for socket handlers
+    const hasPermission = await auth.checkPermission('player');
+    if (!hasPermission) {
+    throw new Error('Insufficient permissions');
+}
+}
+    ```
+
+</CodeGroup>
+
+## Permission Context
+
+The `ScriptContext` provides authentication utilities through the `auth` object:
+
+```typescript {{ title: 'Auth Context' }}
+interface AuthContext {
+  createToken: (payload: { [key: string]: any }) => Promise<string>;
+  verifyToken: (token: string) => Promise<any>;
+  checkPermission: (
+    requiredLevel: 'guest' | 'player' | 'operator',
+    operatorLevel?: number
+  ) => Promise<boolean>;
+  getPlayerIdFromName: (playerName: string) => Promise<string | null>;
+  getPlayerNameFromId: (playerId: string) => Promise<string | null>;
+}
+```
+
+## Permission Checks
+
+Here are different ways to check permissions in your modules:
+
+<CodeGroup>
+
+    ```typescript {{ title: 'Decorator Check' }}
+    @Command(['admin'])
+    @Permission('operator')
+    async adminCommand({ params }: ScriptContext) {
+    // This will only execute if user is an operator
+}
+    ```
+
+    ```typescript {{ title: 'Manual Check' }}
+    @Socket('sensitive_data')
+    async getData({ params, auth }: ScriptContext) {
+    const hasPermission = await auth.checkPermission('operator');
+    if (!hasPermission) {
+    return {
+    success: false,
+    error: 'Insufficient permissions'
+};
+}
+}
+    ```
+
+    ```typescript {{ title: 'Conditional Logic' }}
+    @Command(['feature'])
+    @Permission('player')
+    async complexFeature({ params, auth }: ScriptContext) {
+    const isOperator = await auth.checkPermission('operator');
+
+    if (isOperator) {
+    // Advanced operator features
+} else {
+    // Basic player features
+}
+}
+    ```
+
+</CodeGroup>
+
+## Command Permissions
+
+Commands can specify required permission levels:
+
+```typescript {{ title: 'Command Permission Examples' }}
+@Module({
+  name: 'ServerModule',
+  version: '1.0.0'
+})
+export class ServerModule {
+  // Available to all authenticated players
+  @Command(['help'])
+  @Permission('player')
+  async helpCommand() {
+    // Implementation
+  }
+
+  // Only available to operators
+  @Command(['reload'])
+  @Permission('operator')
+  async reloadCommand() {
+    // Implementation
+  }
+
+  // Available to unauthenticated users
+  @Command(['register'])
+  @Permission('guest')
+  async registerCommand() {
+    // Implementation
+  }
+}
+```
+
+## Socket Handler Permissions
+
+Socket handlers require manual permission checks:
+
+```typescript {{ title: 'Socket Permission Example' }}
+@Socket('player_stats')
+async handlePlayerStats({ params, kv, auth }: ScriptContext) {
+  try {
+    // Verify basic authentication
+    const hasPermission = await auth.checkPermission('player');
+    if (!hasPermission) {
+      return {
+        success: false,
+        error: 'Authentication required'
+      };
+    }
+
+    // Check for administrative access if needed
+    const isOperator = await auth.checkPermission('operator');
+    const stats = await kv.get(['player', params.playerName, 'stats']);
+
+    // Return different data based on permission level
+    return {
+      success: true,
+      data: isOperator ? stats.value : filterSensitiveData(stats.value)
+    };
+  } catch (error) {
+    return {
+      success: false,
+      error: error.message
+    };
+  }
+}
+```
+
+## Error Handling
+
+Handle permission errors gracefully:
+
+```typescript {{ title: 'Error Handling' }}
+@Command(['admin'])
+@Permission('operator')
+async adminCommand({ params, api }: ScriptContext) {
+  try {
+    // Command implementation
+    await api.executeCommand('your command');
+  } catch (error) {
+    if (error.message.includes('permission')) {
+      await api.tellraw(params.sender, JSON.stringify({
+        text: 'You do not have permission to use this command',
+        color: 'red'
+      }));
+    } else {
+      throw error;
+    }
+  }
+}
+```
+
+## Best Practices
+
+When implementing permissions:
+
+```typescript {{ title: 'Permission Best Practices' }}
+1. Always use @Permission decorator for commands
+2. Implement manual checks for socket handlers
+3. Use granular permission levels
+4. Handle permission errors gracefully
+5. Log permission violations
+6. Never bypass permission checks
+7. Validate all user input regardless of permissions
+```
+
+## Example Module
+
+Here's a complete example showing different permission patterns:
+
+```typescript {{ title: 'CompleteModule.ts' }}
+@Module({
+  name: 'AdminModule',
+  version: '1.0.0'
+})
+export class AdminModule {
+  // Command with operator permission
+  @Command(['kick'])
+  @Permission('operator')
+  async kickPlayer({ params, api }: ScriptContext) {
+    const { sender, args } = params;
+    await api.kick(args.player, args.reason);
+  }
+
+  // Socket with manual permission check
+  @Socket('server_stats')
+  async getServerStats({ params, kv, auth }: ScriptContext) {
+    const isOperator = await auth.checkPermission('operator');
+
+    // Basic stats for players
+    const basicStats = await kv.get(['server', 'basic_stats']);
+
+    if (!isOperator) {
+      return {
+        success: true,
+        data: basicStats.value
+      };
+    }
+
+    // Detailed stats for operators
+    const detailedStats = await kv.get(['server', 'detailed_stats']);
+    return {
+      success: true,
+      data: {
+        ...basicStats.value,
+        ...detailedStats.value
+      }
+    };
+  }
+
+  // Mixed permission levels
+  @Command(['stats'])
+  @Permission('player')
+  async viewStats({ params, kv, auth }: ScriptContext) {
+    const { sender, args } = params;
+    const targetPlayer = args.player || sender;
+
+    // Players can only view their own stats
+    if (targetPlayer !== sender) {
+      const isOperator = await auth.checkPermission('operator');
+      if (!isOperator) {
+        throw new Error('You can only view your own stats');
+      }
+    }
+
+    const stats = await kv.get(['player', targetPlayer, 'stats']);
+    return stats.value;
+  }
+}
+```
+
+<div className="not-prose">
+    <Button href="/modules" variant="text" arrow="right">
+        <>Learn more about Modules</>
+    </Button>
+</div>

@@ -1,0 +1,513 @@
+
+export const metadata = {
+    title: 'Player Statistics Module',
+    description:
+        'Track and display comprehensive player statistics in your Minecraft server.',
+}
+
+# Player Statistics
+
+Track player metrics and provide both in-game and web-based statistics viewing. {{ className: 'lead' }}
+
+## Complete Module
+
+```typescript {{ title: 'PlayerStatsModule.ts' }}
+interface PlayerStats {
+  general: {
+    firstJoin: string;
+    lastSeen: string;
+    playtime: number;
+    joinCount: number;
+  };
+  combat: {
+    kills: number;
+    deaths: number;
+    killstreak: number;
+    bestKillstreak: number;
+  };
+  blocks: {
+    broken: number;
+    placed: number;
+  };
+}
+
+interface SessionData {
+  startTime: number;
+  lastLocation?: {
+    x: number;
+    y: number;
+    z: number;
+    dimension: string;
+  };
+}
+
+@Module({
+  name: 'PlayerStats',
+  version: '1.0.0'
+})
+export class PlayerStatsModule {
+  // Get player stats
+  private async getStats(
+    kv: Deno.Kv,
+    playerName: string
+  ): Promise<PlayerStats> {
+    const stats = await kv.get(['stats', playerName]);
+    return stats.value || {
+      general: {
+        firstJoin: new Date().toISOString(),
+        lastSeen: new Date().toISOString(),
+        playtime: 0,
+        joinCount: 0
+      },
+      combat: {
+        kills: 0,
+        deaths: 0,
+        killstreak: 0,
+        bestKillstreak: 0
+      },
+      blocks: {
+        broken: 0,
+        placed: 0
+      }
+    };
+  }
+
+  // Update specific stat
+  private async updateStat(
+    kv: Deno.Kv,
+    playerName: string,
+    path: string[],
+    value: number | string,
+    operation: 'set' | 'increment' = 'set'
+  ): Promise<void> {
+    const stats = await this.getStats(kv, playerName);
+
+    let current = stats;
+    for (let i = 0; i < path.length - 1; i++) {
+      current = current[path[i]];
+    }
+
+    const lastKey = path[path.length - 1];
+    if (operation === 'increment') {
+      current[lastKey] += value;
+    } else {
+      current[lastKey] = value;
+    }
+
+    await kv.set(['stats', playerName], stats);
+  }
+
+  // Handle player join
+  @Event('player_joined')
+  async handleJoin({ params, kv }: ScriptContext) {
+    const { playerName } = params;
+
+    try {
+      const stats = await this.getStats(kv, playerName);
+
+      if (!stats.general.firstJoin) {
+        stats.general.firstJoin = new Date().toISOString();
+      }
+
+      // Update stats
+      stats.general.lastSeen = new Date().toISOString();
+      stats.general.joinCount++;
+
+      // Store session start
+      await kv.set(['stats', 'sessions', playerName], {
+        startTime: Date.now(),
+        lastLocation: {
+          x: params.x,
+          y: params.y,
+          z: params.z,
+          dimension: params.dimension
+        }
+      });
+
+      await kv.set(['stats', playerName], stats);
+
+    } catch (error) {
+      console.error(`Error updating join stats: ${error.message}`);
+    }
+  }
+
+  // Handle player leave
+  @Event('player_left')
+  async handleLeave({ params, kv }: ScriptContext) {
+    const { playerName } = params;
+
+    try {
+      // Get session data
+      const session = await kv.get(['stats', 'sessions', playerName]);
+      if (session.value) {
+        const duration = Date.now() - session.value.startTime;
+
+        // Update playtime
+        await this.updateStat(
+          kv,
+          playerName,
+          ['general', 'playtime'],
+          Math.floor(duration / 1000),
+          'increment'
+        );
+
+        // Clear session
+        await kv.delete(['stats', 'sessions', playerName]);
+      }
+
+    } catch (error) {
+      console.error(`Error updating leave stats: ${error.message}`);
+    }
+  }
+
+  // Handle player death
+  @Event('player_death')
+  async handleDeath({ params, kv }: ScriptContext) {
+    const { playerName, attackerId, attackerType } = params;
+
+    try {
+      // Update death stats
+      await this.updateStat(
+        kv,
+        playerName,
+        ['combat', 'deaths'],
+        1,
+        'increment'
+      );
+
+      // Reset killstreak
+      await this.updateStat(
+        kv,
+        playerName,
+        ['combat', 'killstreak'],
+        0,
+        'set'
+      );
+
+      // Update killer stats if it was a player
+      if (attackerType === 'player' && attackerId) {
+        await this.updateStat(
+          kv,
+          attackerId,
+          ['combat', 'kills'],
+          1,
+          'increment'
+        );
+
+        // Update killstreak
+        const killerStats = await this.getStats(kv, attackerId);
+        const newKillstreak = killerStats.combat.killstreak + 1;
+
+        await this.updateStat(
+          kv,
+          attackerId,
+          ['combat', 'killstreak'],
+          newKillstreak,
+          'set'
+        );
+
+        // Check best killstreak
+        if (newKillstreak > killerStats.combat.bestKillstreak) {
+          await this.updateStat(
+            kv,
+            attackerId,
+            ['combat', 'bestKillstreak'],
+            newKillstreak,
+            'set'
+          );
+        }
+      }
+
+    } catch (error) {
+      console.error(`Error updating death stats: ${error.message}`);
+    }
+  }
+
+  // Handle block break
+  @Event('player_break_block_after')
+  async handleBlockBreak({ params, kv }: ScriptContext) {
+    const { playerName } = params;
+
+    try {
+      await this.updateStat(
+        kv,
+        playerName,
+        ['blocks', 'broken'],
+        1,
+        'increment'
+      );
+    } catch (error) {
+      console.error(`Error updating block stats: ${error.message}`);
+    }
+  }
+
+  // View stats command
+  @Command(['stats'])
+  @Description('View your statistics')
+  @Permission('player')
+  async viewStats({ params, kv, api }: ScriptContext) {
+    const { sender } = params;
+
+    try {
+      const stats = await this.getStats(kv, sender);
+      const playtime = this.formatPlaytime(stats.general.playtime);
+
+      await api.tellraw(sender, JSON.stringify([
+        { text: "=== Your Stats ===\n", color: "gold", bold: true },
+        { text: `Playtime: ${playtime}\n`, color: "yellow" },
+        { text: `Joins: ${stats.general.joinCount}\n`, color: "yellow" },
+        { text: `K/D: ${stats.combat.kills}/${stats.combat.deaths}\n`, color: "red" },
+        { text: `Best Killstreak: ${stats.combat.bestKillstreak}\n`, color: "red" },
+        { text: `Blocks Broken: ${stats.blocks.broken}\n`, color: "aqua" },
+        { text: `First Join: ${new Date(stats.general.firstJoin).toLocaleDateString()}\n`, color: "gray" }
+      ]));
+
+    } catch (error) {
+      await api.tellraw(sender, JSON.stringify({
+        text: `Error: ${error.message}`,
+        color: "red"
+      }));
+    }
+  }
+
+  // Format playtime
+  private formatPlaytime(seconds: number): string {
+    const hours = Math.floor(seconds / 3600);
+    const minutes = Math.floor((seconds % 3600) / 60);
+
+    return hours > 0
+      ? `${hours}h ${minutes}m`
+      : `${minutes}m`;
+  }
+
+  // WebSocket endpoint for stats
+  @Socket('get_player_stats')
+  async getPlayerStats({ params, kv, auth }: ScriptContext) {
+    try {
+      // Verify authentication
+      if (!await auth.checkPermission('player')) {
+        return {
+          success: false,
+          error: 'Unauthorized'
+        };
+      }
+
+      const stats = await this.getStats(kv, params.playerName);
+
+      return {
+        success: true,
+        data: stats
+      };
+
+    } catch (error) {
+      return {
+        success: false,
+        error: error.message
+      };
+    }
+  }
+
+  // Get top players
+  @Socket('get_leaderboard')
+  async getLeaderboard({ params, kv, auth }: ScriptContext) {
+    try {
+      // Verify authentication
+      if (!await auth.checkPermission('player')) {
+        return {
+          success: false,
+          error: 'Unauthorized'
+        };
+      }
+
+      const { category = 'kills', limit = 10 } = params;
+
+      // Get all player stats
+      const players = await kv.get(['stats']);
+      const allStats = players.value || {};
+
+      // Sort players by category
+      const sorted = Object.entries(allStats)
+        .map(([name, stats]) => ({
+          name,
+          value: this.getStatValue(stats, category)
+        }))
+        .sort((a, b) => b.value - a.value)
+        .slice(0, limit);
+
+      return {
+        success: true,
+        data: sorted
+      };
+
+    } catch (error) {
+      return {
+        success: false,
+        error: error.message
+      };
+    }
+  }
+
+  // Get specific stat value from path
+  private getStatValue(stats: any, path: string): number {
+    const parts = path.split('.');
+    let value = stats;
+
+    for (const part of parts) {
+      value = value[part];
+    }
+
+    return value || 0;
+  }
+}
+```
+
+## Stats Tracking
+
+The module tracks various statistics:
+
+```typescript {{ title: 'Stat Categories' }}
+interface PlayerStats {
+  general: {
+    firstJoin: string;     // First server join
+    lastSeen: string;      // Last online
+    playtime: number;      // Total seconds played
+    joinCount: number;     // Total joins
+  };
+  combat: {
+    kills: number;         // Player kills
+    deaths: number;        // Deaths
+    killstreak: number;    // Current killstreak
+    bestKillstreak: number; // Best killstreak
+  };
+  blocks: {
+    broken: number;        // Blocks broken
+    placed: number;        // Blocks placed
+  };
+}
+```
+
+## Usage
+
+View stats in-game or via WebSocket:
+
+<CodeGroup>
+
+    ```typescript {{ title: 'In-Game Commands' }}
+    // View your stats
+    /stats
+    ```
+
+    ```typescript {{ title: 'WebSocket Queries' }}
+    // Get player stats
+    socket.send({
+    eventType: 'get_player_stats',
+    data: {
+    playerName: 'Player123'
+}
+});
+
+    // Get leaderboard
+    socket.send({
+    eventType: 'get_leaderboard',
+    data: {
+    category: 'combat.kills',
+    limit: 10
+}
+});
+    ```
+
+</CodeGroup>
+
+## Event Handling
+
+The module tracks various events:
+
+```typescript {{ title: 'Events' }}
+// Join/Leave tracking
+@Event('player_joined')
+@Event('player_left')
+
+// Combat tracking
+@Event('player_death')
+
+// Block tracking
+@Event('player_break_block_after')
+```
+
+## Web Integration
+
+Access stats through WebSocket endpoints:
+
+```typescript {{ title: 'Web Client Example' }}
+class StatsClient {
+  constructor(socket: WebSocket) {
+    this.socket = socket;
+  }
+
+  // Get player stats
+  async getPlayerStats(playerName: string) {
+    return this.sendRequest('get_player_stats', {
+      playerName
+    });
+  }
+
+  // Get leaderboard
+  async getLeaderboard(category: string, limit: number = 10) {
+    return this.sendRequest('get_leaderboard', {
+      category,
+      limit
+    });
+  }
+
+  private async sendRequest(eventType: string, data: any) {
+    return new Promise((resolve) => {
+      this.socket.send(JSON.stringify({
+        eventType,
+        data
+      }));
+
+      this.socket.onmessage = (event) => {
+        resolve(JSON.parse(event.data));
+      };
+    });
+  }
+}
+
+// Usage
+const stats = new StatsClient(socket);
+
+// Get player stats
+const playerStats = await stats.getPlayerStats('Player123');
+
+// Get kill leaderboard
+const topKillers = await stats.getLeaderboard('combat.kills');
+```
+
+## Key Features
+
+1. **Comprehensive Tracking**
+- Playtime
+- Combat stats
+- Block interaction
+- Session tracking
+
+2. **Real-time Updates**
+- Event-based tracking
+- Automatic updates
+- Session management
+
+3. **Data Access**
+- In-game commands
+- WebSocket API
+- Leaderboards
+
+4. **Performance**
+- Efficient storage
+- Atomic updates
+- Event batching
+
+<div className="not-prose">
+    <Button href="/examples/economy" variant="text" arrow="right">
+        <>View Economy System Example</>
+    </Button>
+</div>

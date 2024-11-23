@@ -1,27 +1,85 @@
 import { HeroPattern } from '@/components/HeroPattern'
 
 export const metadata = {
-  title: 'Enchanted Server Documentation',
+  title: 'Introduction - Enchanted Documentation',
   description:
-    'Learn everything there is to know about the Enchanted Server and Operating System.',
+    'Learn how to enhance your Minecraft server with Enchanted - the most advanced server enhancement framework.',
 }
 
 export const sections = [
-  { title: 'Guides', id: 'guides' },
-  { title: 'Resources', id: 'resources' },
+  { title: 'What is Enchanted?', id: 'what-is-enchanted' },
+  { title: 'Key Features', id: 'key-features' },
+  { title: 'Getting Started', id: 'getting-started' },
 ]
 
 <HeroPattern />
 
-<div className="text-6xl dark:text-white/90 text-black/90 font-black uppercase mb-4">Enchan<span className="pr-6 -mt-2 text-fuchsia-500">⛏</span>ed</div>
+<div className="text-6xl dark:text-white/90 text-black/90 font-black mb-4">
+  Enchan<span className="pr-6 -mt-2 text-fuchsia-500">⛏</span>ed
+</div>
 
 <div className="text-2xl">The most advanced Minecraft server enhancement. </div>
-<div className="text-2xl">Command-based real-time websocket server framework powered by Deno 2.0 and Typescript.</div>
+<div className="text-2xl mb-16">Command-based real-time websocket server framework powered by Deno 2.0 and Typescript.</div>
 
+## What is Enchanted? {{ anchor: true }}
 
+Enchanted brings modern development practices to Minecraft server development, combining the power of TypeScript, Deno, and real-time WebSocket communication. {{ className: 'lead' }}
 
-## READY SOON {{ anchor: false }}
+The framework consists of three main components:
 
-This open source project needs more time... come back later. {{ className: 'lead' }}
+- **Denorite Server**: A high-performance WebSocket server for real-time communication
+- **Fabric Plugin**: Seamless Minecraft server integration through a modern mod
+- **Web Operating System**: Intuitive Vue.js-based interface for server management
 
+## Key Features {{ anchor: true }}
 
+### Modern Development
+
+Build your server enhancement modules using TypeScript with hot-reloading support for rapid development. {{ className: 'lead' }}
+
+### Real-Time Communication
+
+Experience instant interactions with your Minecraft server through our WebSocket-based event system. {{ className: 'lead' }}
+
+### Modular Architecture
+
+Create encapsulated functionality using our decorator-based module system and event-driven design. {{ className: 'lead' }}
+
+## Quick Example {{ anchor: true }}
+
+```typescript {{ title: 'welcome.ts' }}
+@Module({
+  name: 'WelcomeModule',
+  version: '1.0.0'
+})
+export class WelcomeModule {
+  @Event('player_joined')
+  async onPlayerJoin({ params, api }: ScriptContext) {
+    const { playerName } = params;
+
+    await api.tellraw(playerName, JSON.stringify({
+      text: "Welcome to the server!",
+      color: "gold",
+      bold: true
+    }));
+  }
+}
+```
+
+## Getting Started {{ anchor: true }}
+
+Ready to enhance your Minecraft server? Follow these steps: {{ className: 'lead' }}
+
+1. [Install Enchanted](/installation) - Set up the framework
+2. [Create your first module](/quickstart) - Build something awesome
+3. [Learn the concepts](/modules) - Master the framework
+4. [Explore examples](/examples/basic-module) - Get inspired
+
+## System Requirements {{ anchor: true }}
+
+Before you begin, ensure you have: {{ className: 'lead' }}
+
+- Deno 2.0 or higher
+- Minecraft server with Fabric mod loader
+- TypeScript development environment
+- Node.js 18+ (for Web OS)

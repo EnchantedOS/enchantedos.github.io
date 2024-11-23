@@ -1,0 +1,348 @@
+
+export const metadata = {
+    title: 'Modules',
+    description:
+        'Learn about the module system, the core building block of Enchanted server enhancements.',
+}
+
+# Modules
+
+Modules are the foundation of Enchanted's functionality. Each module is a TypeScript class that can handle events, commands, and WebSocket messages. {{ className: 'lead' }}
+
+## Basic Module Structure
+
+A basic Enchanted module looks like this:
+
+```typescript {{ title: 'Basic Module' }}
+@Module({
+  name: 'ExampleModule',
+  version: '1.0.0'
+})
+export class ExampleModule {
+  @Event('player_joined')
+  async onPlayerJoin({ params, api }: ScriptContext) {
+    const { playerName } = params;
+    await api.tellraw(playerName, JSON.stringify({
+      text: "Welcome to the server!",
+      color: "gold"
+    }));
+  }
+
+  @Command(['example'])
+  @Description('An example command')
+  @Permission('player')
+  async handleCommand({ params, api }: ScriptContext) {
+    // Command implementation
+  }
+
+  @Socket('example_event')
+  async handleSocket({ params, kv }: ScriptContext) {
+    // Socket handler implementation
+  }
+}
+```
+
+## Module Context
+
+Every module method receives a `ScriptContext` object:
+
+<CodeGroup>
+
+    ```typescript {{ title: 'Context Interface' }}
+    interface ScriptContext {
+    params: Record<string, unknown>;    // Event/command parameters
+    kv: Deno.Kv;                       // Key-value storage
+    api: MinecraftApi;                 // Minecraft API
+    auth: AuthContext;                 // Authentication utilities
+    log: (message: string) => void;    // Logging function
+    sendToPlayer: (playerId: string, data: unknown) => void;
+    broadcastPlayers: (data: unknown) => void;
+}
+    ```
+
+    ```typescript {{ title: 'Context Usage' }}
+    @Command(['example'])
+    async handleCommand({ params, api, kv, log }: ScriptContext) {
+    // Access command parameters
+    const { sender, args } = params;
+
+    // Use Minecraft API
+    await api.tellraw(sender, "Hello!");
+
+    // Store data
+    await kv.set(['example', 'data'], value);
+
+    // Log messages
+    log(`Command executed by ${sender}`);
+}
+    ```
+
+</CodeGroup>
+
+## Event Handling
+
+Modules can listen to Minecraft server events:
+
+```typescript {{ title: 'Event Handlers' }}
+@Module({
+  name: 'EventModule',
+  version: '1.0.0'
+})
+export class EventModule {
+  @Event('player_joined')
+  async onPlayerJoin({ params, api }: ScriptContext) {
+    const { playerName } = params;
+    // Handle player join
+  }
+
+  @Event('player_left')
+  async onPlayerLeave({ params, kv }: ScriptContext) {
+    const { playerName } = params;
+    // Handle player leave
+  }
+
+  @Event('player_chat')
+  async onPlayerChat({ params }: ScriptContext) {
+    const { playerName, message } = params;
+    // Handle chat message
+  }
+}
+```
+
+## Command Registration
+
+Create custom Minecraft commands:
+
+<CodeGroup>
+
+    ```typescript {{ title: 'Basic Command' }}
+    @Command(['help'])
+    @Description('Show help message')
+    @Permission('player')
+    async helpCommand({ params, api }: ScriptContext) {
+    const { sender } = params;
+    await api.tellraw(sender, "Help message");
+}
+    ```
+
+    ```typescript {{ title: 'Command with Arguments' }}
+    @Command(['give'])
+    @Description('Give items to player')
+    @Permission('operator')
+    @Argument([
+    { name: 'player', type: 'string', description: 'Target player' },
+    { name: 'item', type: 'string', description: 'Item to give' },
+    { name: 'amount', type: 'integer', description: 'Amount', optional: true }
+    ])
+    async giveCommand({ params, api }: ScriptContext) {
+    const { sender, args } = params;
+    await api.give(args.player, args.item, args.amount || 1);
+}
+    ```
+
+</CodeGroup>
+
+## Socket Communication
+
+Handle real-time WebSocket messages:
+
+```typescript {{ title: 'Socket Handlers' }}
+@Module({
+  name: 'SocketModule',
+  version: '1.0.0'
+})
+export class SocketModule {
+  @Socket('get_stats')
+  async handleStats({ params, kv, auth }: ScriptContext) {
+    try {
+      // Check permissions
+      if (!await auth.checkPermission('player')) {
+        return { success: false, error: 'Unauthorized' };
+      }
+
+      // Get stats from KV store
+      const stats = await kv.get(['stats', params.playerName]);
+
+      return {
+        success: true,
+        data: stats.value
+      };
+    } catch (error) {
+      return {
+        success: false,
+        error: error.message
+      };
+    }
+  }
+}
+```
+
+## State Management
+
+Manage module state using Deno KV:
+
+```typescript {{ title: 'State Management' }}
+@Module({
+  name: 'StateModule',
+  version: '1.0.0'
+})
+export class StateModule {
+  private async getPlayerData(kv: Deno.Kv, playerName: string) {
+    const data = await kv.get(['player', playerName, 'data']);
+    return data.value || { created: Date.now() };
+  }
+
+  private async updatePlayerData(
+    kv: Deno.Kv,
+    playerName: string,
+    updates: Record<string, any>
+  ) {
+    const current = await this.getPlayerData(kv, playerName);
+
+    await kv.atomic()
+      .check({ key: ['player', playerName, 'data'], value: current })
+      .mutate({
+        type: 'set',
+        key: ['player', playerName, 'data'],
+        value: { ...current, ...updates }
+      })
+      .commit();
+  }
+}
+```
+
+## Module Communication
+
+Modules can communicate with each other:
+
+```typescript {{ title: 'Module Communication' }}
+@Module({
+  name: 'ShopModule',
+  version: '1.0.0'
+})
+export class ShopModule {
+  @Command(['buy'])
+  async buyItem({ params, kv, executeModuleScript }: ScriptContext) {
+    // Call method from Economy module
+    const result = await executeModuleScript(
+      'Economy',
+      'deductBalance',
+      {
+        player: params.sender,
+        amount: 100
+      }
+    );
+  }
+}
+```
+
+## Module Lifecycle
+
+Understand how modules are loaded and managed:
+
+```typescript {{ title: 'Module Lifecycle' }}
+@Module({
+  name: 'LifecycleModule',
+  version: '1.0.0'
+})
+export class LifecycleModule {
+  // Called when module is loaded
+  async onLoad({ kv, log }: ScriptContext) {
+    log('Module loaded');
+    await kv.set(['module', 'status'], 'loaded');
+  }
+
+  // Called when module is unloaded
+  async onUnload({ kv, log }: ScriptContext) {
+    log('Module unloading');
+    await kv.set(['module', 'status'], 'unloaded');
+  }
+}
+```
+
+## Complex Module Example
+
+Here's a complete module example showing various features:
+
+```typescript {{ title: 'ComplexModule.ts' }}
+interface PlayerProfile {
+  lastSeen: string;
+  playtime: number;
+  stats: {
+    kills: number;
+    deaths: number;
+  };
+}
+
+@Module({
+  name: 'PlayerModule',
+  version: '1.0.0'
+})
+export class PlayerModule {
+  // Private utility methods
+  private async getProfile(
+    kv: Deno.Kv,
+    playerName: string
+  ): Promise<PlayerProfile> {
+    const profile = await kv.get(['player', playerName, 'profile']);
+    return profile.value || {
+      lastSeen: new Date().toISOString(),
+      playtime: 0,
+      stats: { kills: 0, deaths: 0 }
+    };
+  }
+
+  // Event handlers
+  @Event('player_joined')
+  async onPlayerJoin({ params, kv, api }: ScriptContext) {
+    const { playerName } = params;
+    const profile = await this.getProfile(kv, playerName);
+
+    await kv.set(['player', playerName, 'profile'], {
+      ...profile,
+      lastSeen: new Date().toISOString()
+    });
+
+    await api.tellraw(playerName, JSON.stringify({
+      text: `Welcome back! Last seen: ${profile.lastSeen}`,
+      color: "gold"
+    }));
+  }
+
+  // Commands
+  @Command(['profile'])
+  @Description('View your profile')
+  @Permission('player')
+  async viewProfile({ params, kv, api }: ScriptContext) {
+    const { sender } = params;
+    const profile = await this.getProfile(kv, sender);
+
+    await api.tellraw(sender, JSON.stringify([
+      { text: "=== Profile ===\n", color: "gold" },
+      { text: `Playtime: ${profile.playtime}m\n`, color: "yellow" },
+      { text: `K/D: ${profile.stats.kills}/${profile.stats.deaths}`, color: "green" }
+    ]));
+  }
+
+  // Socket handlers
+  @Socket('get_profile')
+  async handleProfileRequest({ params, kv, auth }: ScriptContext) {
+    try {
+      if (!await auth.checkPermission('player')) {
+        return { success: false, error: 'Unauthorized' };
+      }
+
+      const profile = await this.getProfile(kv, params.playerName);
+      return { success: true, data: profile };
+    } catch (error) {
+      return { success: false, error: error.message };
+    }
+  }
+}
+```
+
+<div className="not-prose">
+    <Button href="/events" variant="text" arrow="right">
+        <>Learn about Events</>
+    </Button>
+</div>

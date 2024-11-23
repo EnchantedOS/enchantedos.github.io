@@ -1,0 +1,809 @@
+
+export const metadata = {
+    title: 'Economy Module Example',
+    description:
+        'Build a comprehensive economy system for your Minecraft server using Enchanted.',
+}
+
+# Economy System
+
+Create a full-featured economy system with transactions, shops, and banking features. {{ className: 'lead' }}
+
+## Complete Module
+
+Here's a comprehensive economy module:
+
+```typescript {{ title: 'EconomyModule.ts' }}
+interface Account {
+  balance: number;
+  transactions: Transaction[];
+  lastUpdated: string;
+}
+
+interface Transaction {
+  id: string;
+  type: 'deposit' | 'withdraw' | 'transfer' | 'shop';
+  amount: number;
+  from?: string;
+  to?: string;
+  description: string;
+  timestamp: string;
+}
+
+interface ShopItem {
+  id: string;
+  name: string;
+  price: number;
+  stock: number;
+  maxStock: number;
+  description: string;
+}
+
+@Module({
+  name: 'EconomyModule',
+  version: '1.0.0'
+})
+export class EconomyModule {
+  // Utility method to get account
+  private async getAccount(kv: Deno.Kv, playerName: string): Promise<Account> {
+    const account = await kv.get(['economy', 'accounts', playerName]);
+    return account.value || {
+      balance: 0,
+      transactions: [],
+      lastUpdated: new Date().toISOString()
+    };
+  }
+
+  // Add transaction to account
+  private async addTransaction(
+    kv: Deno.Kv,
+    playerName: string,
+    transaction: Omit<Transaction, 'id' | 'timestamp'>
+  ): Promise<void> {
+    const account = await this.getAccount(kv, playerName);
+
+    const newTransaction: Transaction = {
+      ...transaction,
+      id: crypto.randomUUID(),
+      timestamp: new Date().toISOString()
+    };
+
+    // Keep only last 50 transactions
+    const transactions = [
+      newTransaction,
+      ...account.transactions
+    ].slice(0, 50);
+
+    await kv.set(['economy', 'accounts', playerName], {
+      ...account,
+      transactions,
+      lastUpdated: new Date().toISOString()
+    });
+  }
+
+  // Balance command
+  @Command(['balance', 'bal'])
+  @Description('Check your balance')
+  @Permission('player')
+  async checkBalance({ params, kv, api }: ScriptContext) {
+    const { sender } = params;
+
+    try {
+      const account = await this.getAccount(kv, sender);
+
+      await api.tellraw(sender, JSON.stringify([
+        { text: "=== Balance ===\n", color: "gold", bold: true },
+        { text: `${account.balance} coins`, color: "yellow" }
+      ]));
+
+    } catch (error) {
+      await api.tellraw(sender, JSON.stringify({
+        text: `Error: ${error.message}`,
+        color: "red"
+      }));
+    }
+  }
+
+  // Transfer command
+  @Command(['pay', 'transfer'])
+  @Description('Send money to another player')
+  @Permission('player')
+  @Argument([
+    { name: 'target', type: 'string', description: 'Player to pay' },
+    { name: 'amount', type: 'integer', description: 'Amount to send' }
+  ])
+  async transferMoney({ params, kv, api }: ScriptContext) {
+    const { sender, args } = params;
+
+    try {
+      if (args.amount <= 0) {
+        throw new Error('Amount must be positive');
+      }
+
+      if (sender === args.target) {
+        throw new Error('Cannot transfer to yourself');
+      }
+
+      // Get accounts
+      const [senderAccount, targetAccount] = await Promise.all([
+        this.getAccount(kv, sender),
+        this.getAccount(kv, args.target)
+      ]);
+
+      if (senderAccount.balance < args.amount) {
+        throw new Error('Insufficient funds');
+      }
+
+      // Perform transfer atomically
+      const result = await kv.atomic()
+        .check({ key: ['economy', 'accounts', sender] })
+        .check({ key: ['economy', 'accounts', args.target] })
+        .mutate({
+          type: 'set',
+          key: ['economy', 'accounts', sender],
+          value: {
+            ...senderAccount,
+            balance: senderAccount.balance - args.amount,
+            lastUpdated: new Date().toISOString()
+          }
+        })
+        .mutate({
+          type: 'set',
+          key: ['economy', 'accounts', args.target],
+          value: {
+            ...targetAccount,
+            balance: targetAccount.balance + args.amount,
+            lastUpdated: new Date().toISOString()
+          }
+        })
+        .commit();
+
+      if (!result.ok) {
+        throw new Error('Transfer failed');
+      }
+
+      // Add transactions
+      await Promise.all([
+        this.addTransaction(kv, sender, {
+          type: 'transfer',
+          amount: -args.amount,
+          to: args.target,
+          description: `Transfer to ${args.target}`
+        }),
+        this.addTransaction(kv, args.target, {
+          type: 'transfer',
+          amount: args.amount,
+          from: sender,
+          description: `Transfer from ${sender}`
+        })
+      ]);
+
+      // Send notifications
+      await Promise.all([
+        api.tellraw(sender, JSON.stringify({
+          text: `Sent ${args.amount} coins to ${args.target}`,
+          color: "green"
+        })),
+        api.tellraw(args.target, JSON.stringify({
+          text: `Received ${args.amount} coins from ${sender}`,
+          color: "green"
+        }))
+      ]);
+
+    } catch (error) {
+      await api.tellraw(sender, JSON.stringify({
+        text: `Error: ${error.message}`,
+        color: "red"
+      }));
+    }
+  }
+
+  // Shop management
+  @Command(['shop'])
+  @Description('View shop items')
+  @Permission('player')
+  async viewShop({ params, kv, api }: ScriptContext) {
+    const { sender } = params;
+
+    try {
+      const shop = await kv.get(['economy', 'shop']);
+      const items = shop.value || [];
+
+      await api.tellraw(sender, JSON.stringify([
+        { text: "=== Shop ===\n", color: "gold", bold: true },
+        ...items.map(item => ({
+          text: `${item.name} - ${item.price} coins ` +
+                `(Stock: ${item.stock}/${item.maxStock})\n`,
+          color: "yellow",
+          clickEvent: {
+            action: "run_command",
+            value: `/shop buy ${item.id}`
+          },
+          hoverEvent: {
+            action: "show_text",
+            value: item.description
+          }
+        }))
+      ]));
+
+    } catch (error) {
+      await api.tellraw(sender, JSON.stringify({
+        text: `Error: ${error.message}`,
+        color: "red"
+      }));
+    }
+  }
+
+  // Buy items
+  @Command(['shop', 'buy'])
+  @Description('Buy an item from the shop')
+  @Permission('player')
+  @Argument([
+    { name: 'item', type: 'string', description: 'Item ID' },
+    { name: 'amount', type: 'integer', description: 'Amount', optional: true }
+  ])
+  async buyItem({ params, kv, api }: ScriptContext) {
+    const { sender, args } = params;
+    const amount = args.amount || 1;
+
+    try {
+      if (amount <= 0) {
+        throw new Error('Amount must be positive');
+      }
+
+      // Get shop and account
+      const [shop, account] = await Promise.all([
+        kv.get(['economy', 'shop']),
+        this.getAccount(kv, sender)
+      ]);
+
+      const items = shop.value || [];
+      const item = items.find(i => i.id === args.item);
+
+      if (!item) {
+        throw new Error('Item not found');
+      }
+
+      if (item.stock < amount) {
+        throw new Error('Not enough stock');
+      }
+
+      const totalCost = item.price * amount;
+      if (account.balance < totalCost) {
+        throw new Error('Insufficient funds');
+      }
+
+      // Update stock and balance atomically
+      const result = await kv.atomic()
+        .check({ key: ['economy', 'shop'] })
+        .check({ key: ['economy', 'accounts', sender] })
+        .mutate({
+          type: 'set',
+          key: ['economy', 'shop'],
+          value: items.map(i => i.id === item.id ? {
+            ...i,
+            stock: i.stock - amount
+          } : i)
+        })
+        .mutate({
+          type: 'set',
+          key: ['economy', 'accounts', sender],
+          value: {
+            ...account,
+            balance: account.balance - totalCost,
+            lastUpdated: new Date().toISOString()
+          }
+        })
+        .commit();
+
+      if (!result.ok) {
+        throw new Error('Purchase failed');
+      }
+
+      // Add transaction
+      await this.addTransaction(kv, sender, {
+        type: 'shop',
+        amount: -totalCost,
+        description: `Bought ${amount}x ${item.name}`
+      });
+
+      // Give item to player
+      await api.give(sender, item.id, amount);
+
+      // Send confirmation
+      await api.tellraw(sender, JSON.stringify({
+        text: `Bought ${amount}x ${item.name} for ${totalCost} coins`,
+        color: "green"
+      }));
+
+    } catch (error) {
+      await api.tellraw(sender, JSON.stringify({
+        text: `Error: ${error.message}`,
+        color: "red"
+      }));
+    }
+  }
+
+  // Admin commands
+  @Command(['eco', 'add'])
+  @Description('Add money to a player')
+  @Permission('operator')
+  @Argument([
+    { name: 'player', type: 'string', description: 'Target player' },
+    { name: 'amount', type: 'integer', description: 'Amount to add' }
+  ])
+  async addMoney({ params, kv, api }: ScriptContext) {
+    const { sender, args } = params;
+
+    try {
+      const account = await this.getAccount(kv, args.player);
+
+      await kv.set(['economy', 'accounts', args.player], {
+        ...account,
+        balance: account.balance + args.amount,
+        lastUpdated: new Date().toISOString()
+      });
+
+      await this.addTransaction(kv, args.player, {
+        type: 'deposit',
+        amount: args.amount,
+        description: 'Admin deposit'
+      });
+
+      await api.tellraw(sender, JSON.stringify({
+        text: `Added ${args.amount} coins to ${args.player}`,
+        color: "green"
+      }));
+
+    } catch (error) {
+      await api.tellraw(sender, JSON.stringify({
+        text: `Error: ${error.message}`,
+        color: "red"
+      }));
+    }
+  }
+
+  // Socket endpoints
+  @Socket('get_account')
+  async getAccountInfo({ params, kv, auth }: ScriptContext) {
+    try {
+      if (!await auth.checkPermission('player')) {
+        return {
+          success: false,
+          error: 'Unauthorized'
+        };
+      }
+
+      const account = await this.getAccount(kv, params.playerName);
+
+      return {
+        success: true,
+        data: account
+      };
+
+    } catch (error) {
+      return {
+        success: false,
+        error: error.message
+      };
+    }
+  }
+
+  // Event handlers
+  @Event('player_death')
+  async handleDeath({ params, kv, api }: ScriptContext) {
+    const { playerName } = params;
+
+    try {
+      const account = await this.getAccount(kv, playerName);
+      const penalty = Math.floor(account.balance * 0.05); // 5% penalty
+
+      if (penalty > 0) {
+        await kv.set(['economy', 'accounts', playerName], {
+          ...account,
+          balance: account.balance - penalty,
+          lastUpdated: new Date().toISOString()
+        });
+
+        await this.addTransaction(kv, playerName, {
+          type: 'withdraw',
+          amount: -penalty,
+          description: 'Death penalty'
+        });
+
+        await api.tellraw(playerName, JSON.stringify({
+          text: `Lost ${penalty} coins on death`,
+          color: "red"
+        }));
+      }
+
+    } catch (error) {
+      console.error(`Error in handleDeath: ${error.message}`);
+    }
+  }
+}
+```
+
+## Key Features
+
+### Account Management
+
+Handles player accounts with balances and transaction history:
+
+```typescript {{ title: 'Account Structure' }}
+interface Account {
+  balance: number;
+  transactions: Transaction[];
+  lastUpdated: string;
+}
+
+interface Transaction {
+  id: string;
+  type: 'deposit' | 'withdraw' | 'transfer' | 'shop';
+  amount: number;
+  from?: string;
+  to?: string;
+  description: string;
+  timestamp: string;
+}
+```
+
+### Shop System
+
+Implements a full shop system with stock management:
+
+```typescript {{ title: 'Shop Structure' }}
+interface ShopItem {
+  id: string;
+  name: string;
+  price: number;
+  stock: number;
+  maxStock: number;
+  description: string;
+}
+```
+
+### Player Commands
+
+Basic economy commands for players:
+
+<CodeGroup>
+
+    ```bash {{ title: 'Balance' }}
+    # Check balance
+    /balance
+    /bal
+    ```
+
+    ```bash {{ title: 'Transfer' }}
+    # Send money
+    /pay <player> <amount>
+    /transfer <player> <amount>
+    ```
+
+    ```bash {{ title: 'Shop' }}
+    # View shop
+    /shop
+
+    # Buy items
+    /shop buy <item> [amount]
+    ```
+
+</CodeGroup>
+
+### Admin Commands
+
+Administrative commands for economy management:
+
+```bash {{ title: 'Admin Commands' }}
+# Add money to player
+/eco add <player> <amount>
+
+    # Remove money from player
+    /eco remove <player> <amount>
+
+    # Set player balance
+    /eco set <player> <amount>
+    ```
+
+    ### WebSocket Integration
+
+    Real-time account information:
+
+    ```typescript {{ title: 'WebSocket Usage' }}
+    // Get account information
+    socket.send(JSON.stringify({
+    eventType: 'get_account',
+    data: {
+    playerName: 'player123'
+}
+}));
+
+    // Response
+    {
+        success: true,
+        data: {
+        balance: 1000,
+        transactions: [...],
+        lastUpdated: "2024-01-01T00:00:00.000Z"
+    }
+    }
+    ```
+
+    ## Usage Examples
+
+    Here's how to use the economy system:
+
+    <CodeGroup>
+
+        ```typescript {{ title: 'Basic Usage' }}
+        // Check balance
+        /balance
+
+        // Send money
+        /pay Steve 100
+
+        // Buy items
+        /shop
+        /shop buy diamond 5
+        ```
+
+        ```typescript {{ title: 'Admin Usage' }}
+        // Add money
+        /eco add Alex 1000
+
+        // Modify shop
+        /shop admin add diamond 100
+        /shop admin stock diamond 50
+        ```
+
+        ```typescript {{ title: 'API Usage' }}
+        // Get account via WebSocket
+        socket.send(JSON.stringify({
+        eventType: 'get_account',
+        data: { playerName: 'Alex' }
+    }));
+        ```
+
+    </CodeGroup>
+
+    ## Key Concepts
+
+    1. **Atomic Transactions**
+    - Uses `kv.atomic()` for safe money transfers
+    - Prevents race conditions in shop purchases
+    - Ensures data consistency
+
+    ```typescript {{ title: 'Atomic Transaction Example' }}
+    const result = await kv.atomic()
+    .check({ key: ['economy', 'accounts', sender] })
+    .check({ key: ['economy', 'accounts', receiver] })
+    .mutate({
+    type: 'set',
+    key: ['economy', 'accounts', sender],
+    value: {
+    ...senderAccount,
+    balance: senderAccount.balance - amount
+}
+})
+    .mutate({
+    type: 'set',
+    key: ['economy', 'accounts', receiver],
+    value: {
+    ...receiverAccount,
+    balance: receiverAccount.balance + amount
+}
+})
+    .commit();
+
+    if (!result.ok) {
+    throw new Error('Transaction failed');
+}
+    ```
+
+    2. **Transaction History**
+    - Tracks all money movements
+    - Limited to last 50 transactions
+    - Includes timestamps and descriptions
+
+    ```typescript {{ title: 'Transaction Handling' }}
+    private async addTransaction(
+    kv: Deno.Kv,
+    playerName: string,
+    transaction: Omit<Transaction, 'id' | 'timestamp'>
+    ): Promise<void> {
+    const account = await this.getAccount(kv, playerName);
+
+    const newTransaction: Transaction = {
+    ...transaction,
+    id: crypto.randomUUID(),
+    timestamp: new Date().toISOString()
+};
+
+    // Keep only last 50 transactions
+    const transactions = [
+    newTransaction,
+    ...account.transactions
+    ].slice(0, 50);
+
+    await kv.set(['economy', 'accounts', playerName], {
+    ...account,
+    transactions,
+    lastUpdated: new Date().toISOString()
+});
+}
+    ```
+
+    3. **Shop System Integration**
+    - Manages item stock
+    - Handles concurrent purchases
+    - Integrates with Minecraft inventory
+
+    ```typescript {{ title: 'Shop Purchase' }}
+    // Validate purchase
+    if (item.stock < amount) {
+        throw new Error('Not enough stock');
+    }
+
+    if (account.balance < totalCost) {
+        throw new Error('Insufficient funds');
+    }
+
+    // Update stock and balance
+    await kv.atomic()
+    // ... atomic operation
+
+    // Give item to player
+    await api.give(sender, item.id, amount);
+    ```
+
+    4. **Interactive Commands**
+    - Clickable shop items
+    - Hover descriptions
+    - Clear feedback messages
+
+    ```typescript {{ title: 'Interactive Messages' }}
+    await api.tellraw(sender, JSON.stringify([
+    {
+        text: `${item.name} - ${item.price} coins\n`,
+        color: "yellow",
+        clickEvent: {
+        action: "run_command",
+        value: `/shop buy ${item.id}`
+    },
+        hoverEvent: {
+        action: "show_text",
+        value: item.description
+    }
+    }
+    ]));
+    ```
+
+    5. **Event Integration**
+    - Death penalties
+    - Achievement rewards
+    - Activity bonuses
+
+    ```typescript {{ title: 'Event Handling' }}
+    @Event('player_death')
+    async handleDeath({ params, kv, api }: ScriptContext) {
+        const penalty = Math.floor(account.balance * 0.05);
+        // Apply 5% death penalty
+    }
+
+    @Event('player_joined')
+    async handleJoin({ params, kv, api }: ScriptContext) {
+        // Daily login bonus
+    }
+    ```
+
+    ## Common Patterns
+
+    Here are some useful patterns demonstrated in this module:
+
+    ### 1. Safe Money Operations
+
+    Always use atomic operations for balance changes:
+
+    ```typescript {{ title: 'Safe Money Handling' }}
+    // Bad - Race condition prone
+    account.balance += amount;
+    await kv.set(['economy', 'accounts', player], account);
+
+    // Good - Atomic operation
+    await kv.atomic()
+    .check({ key: ['economy', 'accounts', player] })
+    .mutate({
+        type: 'set',
+        key: ['economy', 'accounts', player],
+        value: {
+        ...account,
+        balance: account.balance + amount
+    }
+    })
+    .commit();
+    ```
+
+    ### 2. Transaction Logging
+
+    Always log transactions for accountability:
+
+    ```typescript {{ title: 'Transaction Logging' }}
+    await this.addTransaction(kv, player, {
+        type: 'shop',
+        amount: -totalCost,
+        description: `Bought ${amount}x ${item.name}`,
+        // Additional metadata
+        metadata: {
+        itemId: item.id,
+        quantity: amount
+    }
+    });
+    ```
+
+    ### 3. User Feedback
+
+    Provide clear feedback for all operations:
+
+    ```typescript {{ title: 'User Feedback' }}
+    try {
+        // Perform operation
+        await api.tellraw(sender, JSON.stringify({
+            text: `Successfully bought ${item.name}`,
+            color: "green"
+        }));
+    } catch (error) {
+        await api.tellraw(sender, JSON.stringify({
+            text: `Error: ${error.message}`,
+            color: "red"
+        }));
+    }
+    ```
+
+    ### 4. Input Validation
+
+    Validate all inputs before processing:
+
+    ```typescript {{ title: 'Input Validation' }}
+    if (amount <= 0) {
+        throw new Error('Amount must be positive');
+    }
+
+    if (sender === target) {
+        throw new Error('Cannot transfer to yourself');
+    }
+
+    if (account.balance < amount) {
+        throw new Error('Insufficient funds');
+    }
+    ```
+
+    ## Extension Ideas
+
+    Ways to extend this economy system:
+
+    1. **Banking System**
+    - Interest rates
+    - Loans
+    - Joint accounts
+
+    2. **Market System**
+    - Player shops
+    - Auctions
+    - Trading
+
+    3. **Job System**
+    - Salary payments
+    - Task rewards
+    - Career progression
+
+    4. **Economy Events**
+    - Market crashes
+    - Sales events
+    - Lucky bonuses
+
+    <div className="not-prose">
+        <Button href="/examples/chat" variant="text" arrow="right">
+            <>View Chat System Example</>
+        </Button>
+    </div>
